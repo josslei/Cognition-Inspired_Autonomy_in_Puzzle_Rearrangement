@@ -1,0 +1,3 @@
+[submodule "datasets/kilogram"]
+	path = datasets/kilogram
+	url = git@github.com:lil-lab/kilogram.git
