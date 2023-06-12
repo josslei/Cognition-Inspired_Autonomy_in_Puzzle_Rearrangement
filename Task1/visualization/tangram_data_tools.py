@@ -3,6 +3,9 @@ from typing import Tuple
 import numpy as np
 from itertools import permutations
 
+TANGRAM_DATA_MAX: float = 2.0 + 7 * np.sqrt(2) + np.sqrt(5)
+
+
 def rotation_matrix_2d_from_theta(theta: float) -> np.matrix:
     return np.matrix([[np.cos(theta), -np.sin(theta)],
                       [np.sin(theta), np.cos(theta)]])

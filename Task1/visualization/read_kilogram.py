@@ -11,10 +11,9 @@ except ImportError:
 import numpy as np
 import cv2
 
-import tangram_data_tools
-from tangram_data_tools import rotation_matrix_2d_from_theta
-from tangram_data_tools import vertices_to_position, vertices_to_orientation
-from tangram_data_tools import PIECE_SHAPE_TEMPLATES
+from visualization.tangram_data_tools import rotation_matrix_2d_from_theta
+from visualization.tangram_data_tools import vertices_to_position, vertices_to_orientation
+from visualization.tangram_data_tools import PIECE_SHAPE_TEMPLATES
 
 
 # TODO: There's a "transform" notation in the svg (page-A ~ page-L uses this)
