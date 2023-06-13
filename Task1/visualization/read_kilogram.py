@@ -11,7 +11,9 @@ except ImportError:
 import numpy as np
 import cv2
 
-from visualization.tangram_data_tools import rotation_matrix_2d_from_theta
+sys.path.append('..')
+from visualization.tangram_data_tools import rotation_matrix_2d_from_theta, transformation_matrix_from_svg_str
+from visualization.tangram_data_tools import tuple_2x2_dot_3x3_homogeneous
 from visualization.tangram_data_tools import vertices_to_position, vertices_to_orientation
 from visualization.tangram_data_tools import PIECE_SHAPE_TEMPLATES
 
@@ -38,8 +40,12 @@ def parse_tangram_svg(path_svg: str) -> Tuple[tuple, dict]:
         tag = child.tag.replace(dataset_namespace, '')
         if tag == 'polygon':
             polygon_id = child.attrib['id']
-            points = parse_points(child.attrib['points'])
+            points: List[tuple] = parse_points(child.attrib['points'])
             tangram[polygon_id] = points
+            if 'transform' in child.attrib.keys():
+                transform: np.matrix = transformation_matrix_from_svg_str(child.attrib['transform'])
+                for i, p in enumerate(points):
+                    points[i] = tuple_2x2_dot_3x3_homogeneous(p, transform)
     width = 0
     height = 0
     for k in tangram.keys():
@@ -52,7 +58,7 @@ def parse_tangram_svg(path_svg: str) -> Tuple[tuple, dict]:
     return (width, height), tangram
 
 
-def parse_points(str_points:str) -> List[tuple]:
+def parse_points(str_points: str) -> List[Tuple[float, float]]:
     points = []
     number_strings = ['', '']
     number_strings_flag = 0
@@ -96,24 +102,6 @@ def draw_tangram(canvas_size: List[int],
     return img
 
 
-def standardize_tangram_positions(tangram_data: dict) -> None:
-    """
-    Standardize points of tangram shapes
-    """
-    def get_edge_length(square_vertices: list) -> float:
-        p0 = square_vertices[0]
-        p1 = square_vertices[1]
-        return np.sqrt((p0[0] - p1[0])**2 + (p0[1] - p1[1])**2)
-    for k_tangram in tangram_data:
-        coef: float = get_edge_length(tangram_data[k_tangram]['tangram_shape']['1'])
-        for k_piece in tangram_data[k_tangram]['tangram_shape'].keys():
-            points = []
-            for p in tangram_data[k_tangram]['tangram_shape'][k_piece]:
-                points += [(p[0] / coef, p[1] / coef)]
-            tangram_data[k_tangram]['tangram_shape'][k_piece] = points
-    pass
-
-
 def read_kilogram(path_dataset: str, subset: str, _template_vertices=PIECE_SHAPE_TEMPLATES) -> dict:
     r"""
     JSON schema (parts that will be used):
@@ -134,7 +122,7 @@ def read_kilogram(path_dataset: str, subset: str, _template_vertices=PIECE_SHAPE
                 ├── final: bool (if the part annotation is in the final submission)
                 ├── pieces: list
                 ├── annotation: str
-                └── timestamp: str (actually won't be used this thime)
+                └── timestamp: str (actually won't be used this time)
 
     Returns:
      The structure will be a little bit different, be like:
@@ -163,7 +151,7 @@ def read_kilogram(path_dataset: str, subset: str, _template_vertices=PIECE_SHAPE
      in which (3) \cong (4) and (6) \cong (7)
      * \cong means congruent
 
-     P.S. I changed all their camal case names to snake case names
+     P.S. I changed all their camel case names to snake case names
     """
     def standardize_tangram_shape(tangram_shape: dict) -> float:
         """
@@ -264,17 +252,16 @@ if __name__ == '__main__':
             pass
         cv2.imwrite(f'all_tangrams/{k}.png', img)
 
-    #standardize_tangram_positions(tangram_data)
-    #def get_edge_length(square_vertices: list, which: list) -> float:
-    #    p0 = square_vertices[which[0]]
-    #    p1 = square_vertices[which[1]]
-    #    return math.sqrt((p0[0] - p1[0])**2 + (p0[1] - p1[1])**2)
-    ##for k in tangram_data.keys():
-    ##    l0 = get_edge_length(tangram_data[k]['tangram_shape']['2'], [0,1])
-    ##    l1 = get_edge_length(tangram_data[k]['tangram_shape']['2'], [1,2])
-    ##    l2 = get_edge_length(tangram_data[k]['tangram_shape']['2'], [2,3])
-    ##    l3 = get_edge_length(tangram_data[k]['tangram_shape']['2'], [3,0])
-    ##    print(f'{k}:\t', sum([l0, l1, l2, l3]) / 4)
+
+    ''' Save dataset into json '''
+    if len(sys.argv) == 4:
+        path_parsed_json = sys.argv[3]
+        with open(path_parsed_json, 'w') as fp:
+            parsed_json = json.dumps(tangram_data)
+            fp.write(parsed_json)
+
+
+    ''' Unit Tests '''
     #print('Square:')
     #for p in tangram_data['page1-26']['tangram_shape']['1']:
     #    print('(%.9f,' % p[0], end='')
@@ -305,9 +292,3 @@ if __name__ == '__main__':
                                     vertices_to_position(tangram_data['page1-5']['tangram_shape']['6']))
     print()
     print(theta)
-
-    if len(sys.argv) == 4:
-        path_parsed_json = sys.argv[3]
-        with open(path_parsed_json, 'w') as fp:
-            parsed_json = json.dumps(tangram_data)
-            fp.write(parsed_json)

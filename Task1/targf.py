@@ -7,13 +7,14 @@ import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 from torch_geometric.nn import knn_graph
 
-from typing import Tuple
+from typing import Tuple, List
 import copy
 import json
 
 from network.score_nets import ScoreNetGNN
 from network.sde import marginal_prob_std, diffusion_coeff
 from visualization.read_kilogram import read_kilogram
+from visualization.visualize_tangrams import draw_tangrams
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -22,14 +23,14 @@ class TarGF_Tangram_Ball:
     """
     def __init__(self, sigma, path_kilogram_dataset,
                  num_objs=7, is_json=False, batch_size=1016,
-                 num_epoches=10000, learning_rate=0.0002, betas=(0.5, 0.999),
+                 num_epochs=10000, learning_rate=0.0002, betas=(0.5, 0.999),
                  device=DEVICE) -> None:
         self.marginal_prob_std_fn = functools.partial(marginal_prob_std, sigma=sigma, device=device)
         self.diffusion_coeff_fn = functools.partial(diffusion_coeff, sigma=sigma, device=device)
         self.num_objs = num_objs
 
         # Parameters for training
-        self.num_epoches = num_epoches
+        self.num_epochs = num_epochs
         self.learning_rate = learning_rate
         self.betas = betas
 
@@ -40,8 +41,9 @@ class TarGF_Tangram_Ball:
 
     def train(self) -> None:
         # Prepare dataset
+        # All data are loaded into RAM (of self.device) here
         print('Loading dataset...')
-        _dataset = Dataset_KILOGRAM(self.path_kilogram_dataset, self.is_json, self.device)     # All data are loaded into RAM here
+        _dataset = Dataset_KILOGRAM(self.path_kilogram_dataset, self.is_json, self.device)
         dataloader = DataLoader(_dataset, batch_size=self.batch_size, shuffle=True)
         print('Done.')
 
@@ -56,14 +58,14 @@ class TarGF_Tangram_Ball:
 
         # Training loop
         all_losses = []
-        for epoch in trange(self.num_epoches):
+        for epoch in trange(self.num_epochs):
             avg_loss = 0.0
             num_items = 0
             # Iterate batches
             for i, data in enumerate(dataloader):
                 omega = data[0].view(self.batch_size * self.num_objs, -1)
                 edge = data[1].view(2, -1)
-                loss = self.loss_fn(self.score_net, omega, edge)
+                loss = self.__loss_fn(self.score_net, omega, edge)
 
                 self.optimizer.zero_grad()
                 loss.backward()
@@ -85,7 +87,7 @@ class TarGF_Tangram_Ball:
             pass
         pass
 
-    def loss_fn(self, model, omega, edge_index, eps=1e-5):
+    def __loss_fn(self, model, omega, edge_index, eps=1e-5):
         """The loss function for training score-based generative models.
 
         Parameters:
@@ -141,16 +143,16 @@ class Dataset_KILOGRAM(Dataset):
             tangram_data = read_kilogram(path_dataset=path_kilogram_dataset, subset='full')
         # TODO: turn vertices to position and orientation
 
-        self.dataset_omega: list = []
-        self.dataset_edge: list = []
+        self.dataset_omega: List[torch.Tensor] = []
+        self.dataset_edge: List[torch.Tensor] = []
         for tk in tangram_data.keys():
             omega = []
             for pk in tangram_data[tk]['positions'].keys():
                 o = list(tangram_data[tk]['positions'][pk])
                 o += [tangram_data[tk]['orientations'][pk]]
                 omega += [o]
-            omega = torch.tensor(omega, device=device)
-            self.dataset_omega += [omega]
+            _omega: torch.Tensor = torch.tensor(omega, device=device)
+            self.dataset_omega += [_omega]
         # Normalize and create graph
         self.DATA_MAX = 2 + 7 * np.sqrt(2) + np.sqrt(5)
         for i, _ in enumerate(self.dataset_omega):
@@ -160,13 +162,18 @@ class Dataset_KILOGRAM(Dataset):
                 self.dataset_omega[i][piece_id][1] = piece[1] / self.DATA_MAX
                 self.dataset_omega[i][piece_id][2] = piece[2] / np.pi
             # Create graph
-            edge = knn_graph(self.dataset_omega[i], 7 - 1, loop=False).to(device)
+            edge: torch.Tensor = knn_graph(self.dataset_omega[i], 7 - 1, loop=False).to(device)
             self.dataset_edge += [edge]
         pass
 
-    def __getitem__(self, index: int):  # -> Tuple(torch.tensor, torch.tensor)
-        #return self.dataset_omega[index], self.dataset_edge[index]
-        return self.dataset_omega[0], self.dataset_edge[0]
+    def __getitem__(self, index: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor]: Omega & the edge_index.
+                Shape of omega: (7, 3)
+                Shape of edge_index: (2, 7*6)
+        """
+        return self.dataset_omega[index], self.dataset_edge[index]
 
     def __len__(self) -> int:
         return len(self.dataset_omega)

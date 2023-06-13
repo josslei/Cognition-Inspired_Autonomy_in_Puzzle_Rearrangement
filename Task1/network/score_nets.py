@@ -4,6 +4,7 @@ import torch.nn.functional as F
 import numpy as np
 
 from torch_geometric.nn import EdgeConv
+from torch.nn.parameter import Parameter
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -13,7 +14,7 @@ class GaussianFourierProjection(nn.Module):
         super().__init__()
         # Randomly sample weights during initialization. These weights are fixed
         # during optimization and are not trainable.
-        self.W = nn.Parameter(torch.randn(embed_dim // 2) * scale, requires_grad=False)
+        self.W = Parameter(torch.randn(embed_dim // 2) * scale, requires_grad=False)
 
     def forward(self, x):
         x_proj = x[:, None] * self.W[None, :] * 2 * np.pi

@@ -1,4 +1,4 @@
-from typing import Tuple
+from typing import Tuple, List
 
 import numpy as np
 from itertools import permutations
@@ -9,6 +9,35 @@ TANGRAM_DATA_MAX: float = 2.0 + 7 * np.sqrt(2) + np.sqrt(5)
 def rotation_matrix_2d_from_theta(theta: float) -> np.matrix:
     return np.matrix([[np.cos(theta), -np.sin(theta)],
                       [np.sin(theta), np.cos(theta)]])
+
+
+def transformation_matrix_from_svg_str(transformation_str: str) -> np.matrix:
+    """
+    See <https://developer.mozilla.org/en-US/docs/Web/SVG/Attribute/transform>
+
+    Parameters:
+        transformation_str (str): raw string from attribute "transform".
+    """
+    # Read string
+    values: List[float] = [0.0,] * 6
+    index: int = 0
+    transformation_str = transformation_str[7:-1]    # 'matrix( ... )'
+    number: str = ''
+    for i, c in enumerate(transformation_str):
+        if c == ',' or c == ' ' or i == len(transformation_str) - 1:
+            if number == '':
+                continue
+            values[index] = float(number)
+            index += 1
+            number = ''
+        elif c in '-.0123456789':
+            number += c
+        else:
+            assert(c in ' ,-.0123456789')
+    # Generate matrix
+    return np.matrix([[values[0], values[2], values[4]],
+                      [values[1], values[3], values[5]],
+                      [0.0,       0.0,       1.0     ]])
 
 
 def vertices_to_position(_vertices: list) -> Tuple[float, float]:
@@ -42,7 +71,7 @@ def vertices_to_position(_vertices: list) -> Tuple[float, float]:
 
 def vertices_to_orientation(_template_vertices: list,
                             _obj_vertices: list,
-                            _obj_posistion: Tuple[float, float]) -> float:
+                            _obj_position: Tuple[float, float]) -> float:
     """
     Parameters:
         _template_vertices: float accuracy is 1e-9
@@ -77,7 +106,7 @@ def vertices_to_orientation(_template_vertices: list,
             try:
                 x = tv
                 x_apos = ov
-                d = _obj_posistion
+                d = _obj_position
                 #
                 det_A = x[0]**2 + x[1]**2   # Matrix A's determinant
                 cos =  (x[0] * (x_apos[0] - d[0])) / det_A
@@ -94,10 +123,18 @@ def vertices_to_orientation(_template_vertices: list,
     #assert(len(ok_list) == 1)
     return result
 
+
+def tuple_2x2_dot_3x3_homogeneous(tuple_2x2: Tuple[float, float],
+                                  homogeneous: np.matrix) -> Tuple[float, float]:
+    x: np.matrix = np.matrix([tuple_2x2[0], tuple_2x2[1], 1]).T
+    x = homogeneous * x
+    print((float(x[0]), float(x[1])))
+    return (float(x[0]), float(x[1]))
+
 # accuracy: 1e-9
 # Center of shape varies
 __PIECE_SHAPE_TEMPLATES__ = {
-    # Sqaure (from page1-26)
+    # Square (from page1-26)
     '1': [(1.000000000, 0.000000000),
           (0.000000000, 0.000000000),
           (0.000000000, 1.000000000),

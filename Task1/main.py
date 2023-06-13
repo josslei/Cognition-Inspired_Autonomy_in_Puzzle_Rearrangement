@@ -8,8 +8,8 @@ def main():
                                path_kilogram_dataset='./kilogram/parsed.json',
                                is_json=True,
                                learning_rate=0.0002,
-                               batch_size=1,
-                               num_epoches=10000)
+                               batch_size=127,
+                               num_epochs=10000)
     targf.train()
     pass
 
