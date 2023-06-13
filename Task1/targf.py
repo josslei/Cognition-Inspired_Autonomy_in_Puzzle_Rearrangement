@@ -1,3 +1,4 @@
+import os
 import functools
 import numpy as np
 from tqdm import trange
@@ -10,11 +11,12 @@ from torch_geometric.nn import knn_graph
 from typing import Tuple, List
 import copy
 import json
+import cv2
 
 from network.score_nets import ScoreNetGNN
 from network.sde import marginal_prob_std, diffusion_coeff
 from visualization.read_kilogram import read_kilogram
-from visualization.visualize_tangrams import draw_tangrams
+from visualization.visualize_tangrams import draw_tangrams, images_to_video
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -77,7 +79,6 @@ class TarGF_Tangram_Ball:
             # TODO: Evaluation
             # Save model
             if (epoch + 1) % 1000 == 0:
-                import os
                 os.system('mkdir -p ./logs/')
                 torch.save(self.score_net.state_dict(), f'./logs/score_net_epoch_{epoch}.pt')
                 with open('./logs/training_log_losses.txt', 'w') as fp:
@@ -131,6 +132,75 @@ class TarGF_Tangram_Ball:
         loss = torch.mean(torch.sum(loss, dim=-1))
         # -> () 0-dimension scalar
         return loss
+
+    def test(self,
+             path_state_dict: str,
+             path_save_visualization: str,
+             data_index: int) -> None:
+        # Prepare dataset
+        # All data are loaded into RAM (of self.device) here
+        print('Loading dataset...')
+        _dataset = Dataset_KILOGRAM(self.path_kilogram_dataset, self.is_json, self.device)
+        dataloader = DataLoader(_dataset, batch_size=1, shuffle=False)
+        print('Done.')
+
+        # Loading model
+        print('Loading model...')
+        self.score_net = ScoreNetGNN(marginal_prob_std_func=self.marginal_prob_std_fn,
+                                     num_classes=self.num_objs,
+                                     device=self.device)
+        self.score_net.to(self.device)
+        state_dict = torch.load(path_state_dict)
+        self.score_net.load_state_dict(state_dict)
+        self.score_net.eval()
+        print('Done.')
+
+        # Inference
+        omegas: List[np.ndarray] = []
+        with torch.no_grad():
+            original_omega: torch.Tensor = _dataset.dataset_omega[data_index]   # (7, 3)
+            omegas += [original_omega.cpu().numpy()]
+            # Add perturbance
+            z = torch.randn_like(original_omega)
+            std = self.marginal_prob_std_fn(0.01).repeat(1, self.num_objs).view(-1, 1)
+            perturbance: torch.Tensor = z * std
+            perturbed_omega: torch.Tensor = original_omega + perturbance
+            omegas += [perturbed_omega.cpu().numpy()]
+            # Rearrange tangram pieces
+            done = False
+            i = 0
+            while not done:
+                # Calculate score
+                delta_omega: torch.Tensor = self.__inference(self.score_net, perturbed_omega, 0.01)
+                # Normalize output
+                delta_omega /= 20 * torch.max(torch.abs(delta_omega))
+                # Update omega
+                perturbed_omega += delta_omega
+                omegas += [perturbed_omega.cpu().numpy()]
+
+                i += 1
+                if i == 100:
+                    done = True
+
+        # Visualization
+        frames = draw_tangrams(omegas=omegas[:], canvas_length=1000)
+        os.system(f'mkdir -p {os.path.join(path_save_visualization, "images")}')
+        for i, img in enumerate(frames):
+            cv2.imwrite(f'{os.path.join(path_save_visualization, "images")}/{i}.png', img)
+        images_to_video(os.path.join(path_save_visualization, "inference_process.mp4"),
+                        frames,
+                        [30,] * 2 + [6,] * (len(frames) - 1),
+                        30)
+
+    def __inference(self, model, omega: torch.Tensor, t: float) -> torch.Tensor:
+        omega = copy.deepcopy(omega.to(self.device))
+        # -> (batch_size * num_objs, 3)
+        edge_index: torch.Tensor = knn_graph(omega, k=self.num_objs-1, loop=False).to(self.device)
+        _t: torch.Tensor = torch.tensor([t]).view(-1, 1).to(self.device)
+
+        score = model(omega, edge_index, _t, self.num_objs)
+        # -> (batch_size * num_objs, 3)
+        return score
 
 
 class Dataset_KILOGRAM(Dataset):

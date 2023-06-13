@@ -6,6 +6,33 @@ import cv2
 from visualization.tangram_data_tools import rotation_matrix_2d_from_theta
 from visualization.tangram_data_tools import PIECE_SHAPE_TEMPLATES, TANGRAM_DATA_MAX
 
+
+def images_to_video(path_to_save_video: str,
+                    frames: List[np.ndarray],
+                    repeat_times: List[int],
+                    fps: int) -> None:
+    """
+    Parameters:
+        path_to_save_video (str): path to save the video
+        frames (List[np.ndarray]): frames (images)
+        repeat_times (List[int]): how many times does each image in 'frames'
+            repeats. For example, if repeat_times[0] is 30, frames[0]
+            will be repeated for 30 times in the video.
+        fps (int): frames per second
+    """
+    if path_to_save_video[-4:] != '.mp4':
+        path_to_save_video += '.mp4'
+    frame_size: Tuple[int, int] = (frames[0].shape[1], frames[0].shape[0])
+    video: cv2.VideoWriter = cv2.VideoWriter(path_to_save_video,
+                                             cv2.VideoWriter_fourcc(*'mp4v'),
+                                             fps,
+                                             frame_size)
+    for i, img in enumerate(frames):
+        for _ in range(repeat_times[i]):
+            video.write(img)
+    video.release()
+
+
 def draw_tangrams(omegas: List[np.ndarray],
                   canvas_length: int,
                   thickness: int = 2,
@@ -102,6 +129,7 @@ def draw_tangrams(omegas: List[np.ndarray],
         frames += [img]
     return frames
 
+
 def draw_one_tangram(tangram: Dict[str, List[np.ndarray]],
                      omega: np.ndarray,
                      scale: float,
@@ -157,7 +185,7 @@ def draw_one_tangram(tangram: Dict[str, List[np.ndarray]],
                    position_point_color=position_point_color,
                    orientation_vector_color=orientation_vector_color,
                    orientation_vector_length=orientation_vector_length)
-    return img 
+    return img.astype(np.uint8)
 
 
 def draw_piece(img: np.ndarray,
