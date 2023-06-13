@@ -63,9 +63,8 @@ class TarGF_Tangram_Ball:
             num_items = 0
             # Iterate batches
             for i, data in enumerate(dataloader):
-                omega = data[0].view(self.batch_size * self.num_objs, -1)
-                edge = data[1].view(2, -1)
-                loss = self.__loss_fn(self.score_net, omega, edge)
+                omega = data.view(self.batch_size * self.num_objs, -1)
+                loss = self.__loss_fn(self.score_net, omega)
 
                 self.optimizer.zero_grad()
                 loss.backward()
@@ -77,7 +76,7 @@ class TarGF_Tangram_Ball:
             #print('Average Loss: {:5f}'.format(avg_loss / num_items))
             # TODO: Evaluation
             # Save model
-            if epoch % 1 == 0:
+            if (epoch + 1) % 1000 == 0:
                 import os
                 os.system('mkdir -p ./logs/')
                 torch.save(self.score_net.state_dict(), f'./logs/score_net_epoch_{epoch}.pt')
@@ -87,7 +86,7 @@ class TarGF_Tangram_Ball:
             pass
         pass
 
-    def __loss_fn(self, model, omega, edge_index, eps=1e-5):
+    def __loss_fn(self, model, omega, eps=1e-5):
         """The loss function for training score-based generative models.
 
         Parameters:
@@ -99,7 +98,6 @@ class TarGF_Tangram_Ball:
         """
         omega = omega.to(self.device)
         # -> (batch_size * num_objs, 3)
-        edge_index = copy.deepcopy(edge_index.to(self.device))
 
         random_t = torch.rand(self.batch_size, device=self.device) * (1. - eps) + eps
         random_t = random_t.unsqueeze(-1)
@@ -121,6 +119,8 @@ class TarGF_Tangram_Ball:
         perturbed_omega = copy.deepcopy(omega)  # Can't use torch.clone() because it syncs gradients
         perturbed_omega += z * std  # (batch_size * num_objs, 3) * (batch_size * num_objs, 1)
         # -> (batch_size * num_objs, 3)
+        edge_index = knn_graph(perturbed_omega, k=self.num_objs-1, loop=False).to(self.device)
+        # -> (2, batch_size * num_objs * (num_objs - 1))
 
         score = model(perturbed_omega, edge_index, random_t, self.num_objs)
         # -> (batch_size * num_objs, 3)
@@ -144,7 +144,6 @@ class Dataset_KILOGRAM(Dataset):
         # TODO: turn vertices to position and orientation
 
         self.dataset_omega: List[torch.Tensor] = []
-        self.dataset_edge: List[torch.Tensor] = []
         for tk in tangram_data.keys():
             omega = []
             for pk in tangram_data[tk]['positions'].keys():
@@ -153,7 +152,7 @@ class Dataset_KILOGRAM(Dataset):
                 omega += [o]
             _omega: torch.Tensor = torch.tensor(omega, device=device)
             self.dataset_omega += [_omega]
-        # Normalize and create graph
+        # Normalization
         self.DATA_MAX = 2 + 7 * np.sqrt(2) + np.sqrt(5)
         for i, _ in enumerate(self.dataset_omega):
             # Normalize positions and orientations
@@ -161,19 +160,15 @@ class Dataset_KILOGRAM(Dataset):
                 self.dataset_omega[i][piece_id][0] = piece[0] / self.DATA_MAX
                 self.dataset_omega[i][piece_id][1] = piece[1] / self.DATA_MAX
                 self.dataset_omega[i][piece_id][2] = piece[2] / np.pi
-            # Create graph
-            edge: torch.Tensor = knn_graph(self.dataset_omega[i], 7 - 1, loop=False).to(device)
-            self.dataset_edge += [edge]
         pass
 
-    def __getitem__(self, index: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    def __getitem__(self, index: int) -> torch.Tensor:
         """
         Returns:
-            Tuple[torch.Tensor, torch.Tensor]: Omega & the edge_index.
+            Tuple[torch.Tensor, torch.Tensor]: Omega
                 Shape of omega: (7, 3)
-                Shape of edge_index: (2, 7*6)
         """
-        return self.dataset_omega[index], self.dataset_edge[index]
+        return self.dataset_omega[index]
 
     def __len__(self) -> int:
         return len(self.dataset_omega)
