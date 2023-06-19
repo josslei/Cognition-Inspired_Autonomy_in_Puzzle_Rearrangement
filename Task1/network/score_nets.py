@@ -26,7 +26,7 @@ class ScoreNetGNN(nn.Module):
     Ref: TarGF's ScoreNetGNN for ball (re)arrangement. [TarGF/networks/score_nets.py:107]
 
     """
-    def __init__(self, marginal_prob_std_func, num_classes=7, device=DEVICE, hidden_dim=512, embed_dim=256):
+    def __init__(self, marginal_prob_std_func, num_classes=7, device=DEVICE, hidden_dim=1024, embed_dim=512):
         super().__init__()
 
         self.device = device
