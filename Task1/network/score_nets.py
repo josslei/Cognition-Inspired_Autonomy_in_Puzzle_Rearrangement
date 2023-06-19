@@ -26,7 +26,7 @@ class ScoreNetGNN(nn.Module):
     Ref: TarGF's ScoreNetGNN for ball (re)arrangement. [TarGF/networks/score_nets.py:107]
 
     """
-    def __init__(self, marginal_prob_std_func, num_classes=7, device=DEVICE, hidden_dim=64, embed_dim=32):
+    def __init__(self, marginal_prob_std_func, num_classes=7, device=DEVICE, hidden_dim=512, embed_dim=256):
         super().__init__()
 
         self.device = device
@@ -45,50 +45,93 @@ class ScoreNetGNN(nn.Module):
             nn.Linear(embed_dim, embed_dim),
         )
 
-        ##
-        ## Here we let conv(input_conv) = EdgeConv(input_conv),
-        ## and EdgeConv uses these MLPs as their :math:`h_{\mathbf{\Theta}}`.
-        ##
-        ## If the shape of input_conv is (*, dim),
-        ## the shape of MLP's input should be (*, dim * 2)
-        ##
-        ## Reason:
-        ##  - In the paper, the finally adopted edge function is defined as:
-        ##  :math:`h_{\mathbf{\Theta}}(\bm{x}_i, \bm{x}_j) = \bar{h}_{\mathbf{\Theta}}(\bm{x}_i, \bm{x}_j - \bm{x}_i)`.
-        ##  - Specifically, in the code, the input to the MLP (or any other :math:`h_{\mathbf(\Theta)}`)
-        ##  is defined as `torch.cat([x_i, x_j - x_i], dim=-1)`
-        ##
-        # conv1
-        # input_conv.shape = (batch_size * num_objs, hidden_dim)
-        # input_mlp.shape = (batch_size * num_objs, hidden_dim * 2)
+        # mlp1
+        # input shape: (batch_size * num_objs, hidden_dim)
         self.mlp1 = nn.Sequential(
-            nn.Linear(hidden_dim * 2, hidden_dim),
+            nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(True),
             nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(True)
         )
-        self.conv1 = EdgeConv(self.mlp1)
         # -> (batch_size * num_objs, hidden_dim)
 
-        # conv2
-        # input_conv.shape = (batch_size * num_objs, hidden_dim + embed_dim)
-        # input_mlp.shape = (batch_size * num_objs, (hidden_dim + embed_dim) * 2)
+        # mlp2
+        # input shape = (batch_size * num_objs, hidden_dim + embed_dim)
         self.mlp2 = nn.Sequential(
-            nn.Linear((hidden_dim + embed_dim) * 2, hidden_dim),
+            nn.Linear(hidden_dim + embed_dim, hidden_dim),
             nn.ReLU(True),
             nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(True)
         )
-        self.conv2 = EdgeConv(self.mlp2)
         # -> (batch_size * num_objs, hidden_dim)
 
-        # conv3
-        # input_conv.shape = (batch_size * num_objs, hidden_dim + embed_dim)
-        # input_mlp.shape = (batch_size * num_objs, (hidden_dim + embed_dim) * 2)
+        # mlp3
+        # input shape = (batch_size * num_objs, hidden_dim + embed_dim)
         self.mlp3 = nn.Sequential(
-            nn.Linear((hidden_dim + embed_dim) * 2, hidden_dim),
+            nn.Linear(hidden_dim + embed_dim, hidden_dim),
+            nn.ReLU(True),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(True)
+        )
+        # -> (batch_size * num_objs, hidden_dim)
+
+        # mlp4
+        # input shape = (batch_size * num_objs, hidden_dim + embed_dim)
+        self.mlp4 = nn.Sequential(
+            nn.Linear(hidden_dim + embed_dim, hidden_dim),
+            nn.ReLU(True),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(True)
+        )
+        # -> (batch_size * num_objs, hidden_dim)
+
+        # mlp5
+        # input shape = (batch_size * num_objs, hidden_dim + embed_dim)
+        self.mlp5 = nn.Sequential(
+            nn.Linear(hidden_dim + embed_dim, hidden_dim),
+            nn.ReLU(True),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(True)
+        )
+        # -> (batch_size * num_objs, hidden_dim)
+
+        # mlp6
+        # input shape = (batch_size * num_objs, hidden_dim + embed_dim)
+        self.mlp6 = nn.Sequential(
+            nn.Linear(hidden_dim + embed_dim, hidden_dim),
+            nn.ReLU(True),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(True)
+        )
+        # -> (batch_size * num_objs, hidden_dim)
+
+        # mlp7
+        # input shape = (batch_size * num_objs, hidden_dim + embed_dim)
+        self.mlp7 = nn.Sequential(
+            nn.Linear(hidden_dim + embed_dim, hidden_dim),
+            nn.ReLU(True),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(True)
+        )
+        # -> (batch_size * num_objs, hidden_dim)
+
+        # mlp8
+        # input shape = (batch_size * num_objs, hidden_dim + embed_dim)
+        self.mlp8 = nn.Sequential(
+            nn.Linear(hidden_dim + embed_dim, hidden_dim),
+            nn.ReLU(True),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(True)
+        )
+        # -> (batch_size * num_objs, hidden_dim)
+
+        # mlp_end
+        # input shape = (batch_size * num_objs, hidden_dim + embed_dim)
+        self.mlp_end = nn.Sequential(
+            nn.Linear(hidden_dim + embed_dim, hidden_dim),
             nn.ReLU(True),
             nn.Linear(hidden_dim, 3),
         )
-        self.conv3 = EdgeConv(self.mlp3)
         # -> (batch_size * num_objs, 3)
 
         self.marginal_prob_std = marginal_prob_std_func
@@ -116,11 +159,23 @@ class ScoreNetGNN(nn.Module):
         # -> (batch_size * num_objs, embed_dim)
 
         # Start message passing from init-feature
-        x = F.relu(self.conv1(init_feature, edge_index))
+        x = self.mlp1(init_feature)
         x = torch.cat([x, x_sigma], dim=-1)
-        x = F.relu(self.conv2(x, edge_index))
+        x = self.mlp2(x)
         x = torch.cat([x, x_sigma], dim=-1)
-        x = self.conv3(x, edge_index)
+        x = self.mlp3(x)
+        x = torch.cat([x, x_sigma], dim=-1)
+        x = self.mlp4(x)
+        x = torch.cat([x, x_sigma], dim=-1)
+        x = self.mlp5(x)
+        x = torch.cat([x, x_sigma], dim=-1)
+        x = self.mlp6(x)
+        x = torch.cat([x, x_sigma], dim=-1)
+        x = self.mlp7(x)
+        x = torch.cat([x, x_sigma], dim=-1)
+        x = self.mlp8(x)
+        x = torch.cat([x, x_sigma], dim=-1)
+        x = self.mlp_end(x)
         # -> (batch_size * num_objs, 3)
 
         # Normalization

@@ -8,8 +8,9 @@ def main():
                                is_json=True,
                                learning_rate=0.002,
                                batch_size=127,
-                               num_epochs=10000)
+                               num_epochs=500000)
     targf.train()
+    targf.test('logs/score_net_epoch_499999.pt', 'logs/process_visualization/', 0)
     pass
 
 if __name__ == '__main__':

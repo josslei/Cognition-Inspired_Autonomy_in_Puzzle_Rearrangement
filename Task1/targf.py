@@ -78,7 +78,7 @@ class TarGF_Tangram_Ball:
             #print('Average Loss: {:5f}'.format(avg_loss / num_items))
             # TODO: Evaluation
             # Save model
-            if (epoch + 1) % 1000 == 0:
+            if (epoch + 1) % 500 == 0:
                 os.system('mkdir -p ./logs/')
                 torch.save(self.score_net.state_dict(), f'./logs/score_net_epoch_{epoch}.pt')
                 with open('./logs/training_log_losses.txt', 'w') as fp:
@@ -173,13 +173,13 @@ class TarGF_Tangram_Ball:
                 # Calculate score
                 delta_omega: torch.Tensor = self.__inference(self.score_net, perturbed_omega, 0.01)
                 # Normalize output
-                delta_omega /= 20 * torch.max(torch.abs(delta_omega))
+                delta_omega /= 500 * torch.max(torch.abs(delta_omega))
                 # Update omega
                 perturbed_omega += delta_omega
                 omegas += [perturbed_omega.cpu().numpy()]
 
                 i += 1
-                if i == 100:
+                if i == 300:
                     done = True
 
         # Visualization
@@ -189,7 +189,7 @@ class TarGF_Tangram_Ball:
             cv2.imwrite(f'{os.path.join(path_save_visualization, "images")}/{i}.png', img)
         images_to_video(os.path.join(path_save_visualization, "inference_process.mp4"),
                         frames,
-                        [30,] * 2 + [6,] * (len(frames) - 1),
+                        [30,] + [1,] * (len(frames) - 1),
                         30)
 
     def __inference(self, model, omega: torch.Tensor, t: float) -> torch.Tensor:
@@ -238,7 +238,8 @@ class Dataset_KILOGRAM(Dataset):
             Tuple[torch.Tensor, torch.Tensor]: Omega
                 Shape of omega: (7, 3)
         """
-        return self.dataset_omega[index]
+        #return self.dataset_omega[index]
+        return self.dataset_omega[0]
 
     def __len__(self) -> int:
         return len(self.dataset_omega)
