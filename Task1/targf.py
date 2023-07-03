@@ -8,6 +8,7 @@ import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 from torch_geometric.nn import knn_graph
 
+from itertools import combinations
 from typing import Tuple, List
 import copy
 import json
@@ -59,42 +60,55 @@ class TarGF_Tangram_Ball:
         print('Done.')
 
         # Training loop
-        all_losses = []
+        losses_per_batch = []
         for epoch in trange(self.num_epochs):
-            avg_loss = 0.0
-            num_items = 0
             # Iterate batches
             for i, data in enumerate(dataloader):
                 omega = data.view(self.batch_size * self.num_objs, -1)
-                loss = self.__loss_fn(self.score_net, omega)
-
-                self.optimizer.zero_grad()
-                loss.backward()
-                self.optimizer.step()
-
-                all_losses += [loss.item()]
-                avg_loss += loss.item() * self.batch_size
-                num_items += self.batch_size
-            #print('Average Loss: {:5f}'.format(avg_loss / num_items))
+                loss: float = self.__train_one_batch(self.score_net, omega, self.optimizer)
+                losses_per_batch += [loss]
             # TODO: Evaluation
             # Save model
             if (epoch + 1) % 500 == 0:
                 os.system('mkdir -p ./logs/')
                 torch.save(self.score_net.state_dict(), f'./logs/score_net_epoch_{epoch}.pt')
                 with open('./logs/training_log_losses.txt', 'w') as fp:
-                    for loss in all_losses:
+                    for loss in losses_per_batch:
                         fp.write(f'{loss}\n')
             pass
         pass
 
-    def __loss_fn(self, model, omega, eps=1e-5):
+    def __train_one_batch(self, model, omega, optimizer, r_range: Tuple[int, int] = (5, 7)) -> float:
+        loss_list: List[float] = []
+        loss_value: float = 0.0
+        #for r in range(1, 7):
+        for r in range(*r_range):
+            for mask in combinations([0, 1, 2, 3, 4, 5, 6], r):
+                loss = self.__loss_fn(self.score_net, omega, mask)
+
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+
+                loss_list += [loss.item()]
+        loss_value = sum(loss_list) / len(loss_list)
+        return loss_value
+
+    def __loss_fn(self, model, omega, mask, eps=1e-5):
         """The loss function for training score-based generative models.
 
         Parameters:
-            model: A PyTorch model instance that represents a time-dependent score-based model.
-            omega: A batch of training data. Shape = (batch_size*num_objs, 3)
-            edge_index: A batch of fc graphs. Shape = (2, batch_size*num_objs*(num_objs-1))
-            marginal_prob_std: A function that gives the standard deviation of the perturbation kernel.
+            model: A PyTorch model instance that represents a time-dependent
+                score-based model.
+            omega: A batch of training data.
+                Shape = (batch_size*num_objs, 3)
+            edge_index: A batch of fc graphs.
+                Shape = (2, batch_size*num_objs*(num_objs-1))
+            marginal_prob_std: A function that gives the standard deviation
+                of the perturbation kernel.
+            mask: A list of integer, each is an index (0 ~ 6) indicates
+                a piece that is "masked". A masked piece will not be
+                perturbed.
             eps: A tolerance value for numerical stability.
         """
         omega = omega.to(self.device)
@@ -109,8 +123,9 @@ class TarGF_Tangram_Ball:
         #z_orientation = (torch.randn_like(omega[:,2:]) - 0.5) * 2*np.pi
         ## -> (batch_size * num_objs, 2), interval: [-pi, pi)
         #z = torch.cat([z_position, z_orientation], dim=-1)
-        z = torch.randn_like(omega)
+        z: torch.Tensor = torch.randn_like(omega)
         # -> (batch_size * num_objs, 3)
+        z = self.__mask_perturbance(z, mask, self.batch_size, self.device)
 
         std = self.marginal_prob_std_fn(random_t)   # -> (batch_size, 1) (shape = random_t.shape)
         std = std.repeat(1, self.num_objs)          # -> (batch_size, num_objs)
@@ -136,7 +151,8 @@ class TarGF_Tangram_Ball:
     def test(self,
              path_state_dict: str,
              path_save_visualization: str,
-             data_index: int) -> None:
+             data_index: int,
+             mask: List[int]) -> None:
         # Prepare dataset
         # All data are loaded into RAM (of self.device) here
         print('Loading dataset...')
@@ -162,6 +178,7 @@ class TarGF_Tangram_Ball:
             omegas += [original_omega.cpu().numpy()]
             # Add perturbance
             z = torch.randn_like(original_omega)
+            z = self.__mask_perturbance(z, mask, 1, self.device)
             std = self.marginal_prob_std_fn(0.01).repeat(1, self.num_objs).view(-1, 1)
             perturbance: torch.Tensor = z * std
             perturbed_omega: torch.Tensor = original_omega + perturbance
@@ -201,6 +218,21 @@ class TarGF_Tangram_Ball:
         score = model(omega, edge_index, _t, self.num_objs)
         # -> (batch_size * num_objs, 3)
         return score
+    
+    def __mask_perturbance(self,
+                           z: torch.Tensor,
+                           mask: List[int],
+                           bs: int,
+                           device=DEVICE) -> torch.Tensor:
+        masked_indices: torch.Tensor = torch.zeros([len(mask) * bs,],
+                                                    dtype=torch.int64,
+                                                    device=device)
+        i = 0
+        for j in mask:
+            for k in range(bs):
+                masked_indices[i] = len(mask) * k + j
+                i += 1
+        return z.index_fill(0, masked_indices, 0)
 
 
 class Dataset_KILOGRAM(Dataset):
