@@ -6,10 +6,10 @@ def main():
     targf = TarGF_Tangram_Ball(sigma=25,
                                path_kilogram_dataset='./kilogram/parsed.json',
                                is_json=True,
-                               learning_rate=0.002,
-                               batch_size=127,
+                               learning_rate=0.0002,
+                               batch_size=1016,
                                num_epochs=500000)
-    targf.train()
+    targf.train(log_save_dir='./logs/')
     targf.test('logs/score_net_epoch_499999.pt', 'logs/process_visualization/', 0)
     pass
 

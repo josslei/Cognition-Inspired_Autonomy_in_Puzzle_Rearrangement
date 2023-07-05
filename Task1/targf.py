@@ -13,7 +13,7 @@ import copy
 import json
 import cv2
 
-from network.score_nets import ScoreNetGNN
+from network.score_nets import ScoreNetTangram
 from network.sde import marginal_prob_std, diffusion_coeff
 from visualization.read_kilogram import read_kilogram
 from visualization.visualize_tangrams import draw_tangrams, images_to_video
@@ -41,7 +41,7 @@ class TarGF_Tangram_Ball:
         self.batch_size = batch_size
         self.device = device
 
-    def train(self) -> None:
+    def train(self, log_save_dir: str) -> None:
         # Prepare dataset
         # All data are loaded into RAM (of self.device) here
         print('Loading dataset...')
@@ -51,8 +51,8 @@ class TarGF_Tangram_Ball:
 
         # Create model and optimizer
         print('Creating model and optimizer...')
-        self.score_net = ScoreNetGNN(marginal_prob_std_func=self.marginal_prob_std_fn,
-                                     num_classes=self.num_objs,
+        self.score_net = ScoreNetTangram(marginal_prob_std_func=self.marginal_prob_std_fn,
+                                     num_objs=self.num_objs,
                                      device=self.device)
         self.score_net.to(self.device)
         self.optimizer = optim.Adam(self.score_net.parameters(), lr=self.learning_rate, betas=self.betas)
@@ -65,7 +65,7 @@ class TarGF_Tangram_Ball:
             num_items = 0
             # Iterate batches
             for i, data in enumerate(dataloader):
-                omega = data.view(self.batch_size * self.num_objs, -1)
+                omega = data.view(self.batch_size, self.num_objs * 3)
                 loss = self.__loss_fn(self.score_net, omega)
 
                 self.optimizer.zero_grad()
@@ -79,9 +79,10 @@ class TarGF_Tangram_Ball:
             # TODO: Evaluation
             # Save model
             if (epoch + 1) % 500 == 0:
-                os.system('mkdir -p ./logs/')
-                torch.save(self.score_net.state_dict(), f'./logs/score_net_epoch_{epoch}.pt')
-                with open('./logs/training_log_losses.txt', 'w') as fp:
+                os.system(f'mkdir -p {log_save_dir}')
+                torch.save(self.score_net.state_dict(),
+                           os.path.join(log_save_dir, f'score_net_epoch_{epoch}.pt'))
+                with open(os.path.join(log_save_dir, 'training_log_losses.txt'), 'w') as fp:
                     for loss in all_losses:
                         fp.write(f'{loss}\n')
             pass
@@ -92,43 +93,32 @@ class TarGF_Tangram_Ball:
 
         Parameters:
             model: A PyTorch model instance that represents a time-dependent score-based model.
-            omega: A batch of training data. Shape = (batch_size*num_objs, 3)
-            edge_index: A batch of fc graphs. Shape = (2, batch_size*num_objs*(num_objs-1))
+            omega: A batch of training data. Shape = (batch_size, num_objs * 3)
             marginal_prob_std: A function that gives the standard deviation of the perturbation kernel.
             eps: A tolerance value for numerical stability.
         """
         omega = omega.to(self.device)
-        # -> (batch_size * num_objs, 3)
+        # -> (batch_size, num_objs * 3)
 
         random_t = torch.rand(self.batch_size, device=self.device) * (1. - eps) + eps
         random_t = random_t.unsqueeze(-1)
         # -> (batch_size, 1)
 
-        #z_position = (torch.randn_like(omega[:,:2]) - 0.5) * 2*omega[:, :2].max()
-        ## -> (batch_size * num_objs, 2), interval: [-omega[:,:2].max(), omega[:,:2].max())
-        #z_orientation = (torch.randn_like(omega[:,2:]) - 0.5) * 2*np.pi
-        ## -> (batch_size * num_objs, 2), interval: [-pi, pi)
-        #z = torch.cat([z_position, z_orientation], dim=-1)
         z = torch.randn_like(omega)
-        # -> (batch_size * num_objs, 3)
+        # -> (batch_size, num_objs * 3)
 
-        std = self.marginal_prob_std_fn(random_t)   # -> (batch_size, 1) (shape = random_t.shape)
-        std = std.repeat(1, self.num_objs)          # -> (batch_size, num_objs)
-        std = std.view(-1, 1)
-        # -> (batch_size * num_objs, 1)
+        std = self.marginal_prob_std_fn(random_t)
+        # -> (batch_size, 1) (shape = random_t.shape)
 
         perturbed_omega = copy.deepcopy(omega)  # Can't use torch.clone() because it syncs gradients
-        perturbed_omega += z * std  # (batch_size * num_objs, 3) * (batch_size * num_objs, 1)
-        # -> (batch_size * num_objs, 3)
-        edge_index = knn_graph(perturbed_omega, k=self.num_objs-1, loop=False).to(self.device)
-        # -> (2, batch_size * num_objs * (num_objs - 1))
+        perturbed_omega += z * std  # (batch_size, num_objs * 3) * (batch_size, 1)
+        # -> (batch_size, num_objs * 3)
 
-        score = model(perturbed_omega, edge_index, random_t, self.num_objs)
-        # -> (batch_size * num_objs, 3)
+        score = model(perturbed_omega, random_t, self.num_objs)
+        # -> (batch_size, num_objs * 3)
 
         #loss = torch.mean(torch.sum(((score * std + z)**2).view(self.batch_size, -1), dim=-1))
-        loss = (score * std + z)**2             # -> (batch_size * num_objs, 3)
-        loss = loss.view(self.batch_size, -1)   # -> (batch_size, 3 * num_objs)
+        loss = (score * std + z)**2             # -> (batch_size, num_objs * 3)
         loss = torch.mean(torch.sum(loss, dim=-1))
         # -> () 0-dimension scalar
         return loss
@@ -146,8 +136,8 @@ class TarGF_Tangram_Ball:
 
         # Loading model
         print('Loading model...')
-        self.score_net = ScoreNetGNN(marginal_prob_std_func=self.marginal_prob_std_fn,
-                                     num_classes=self.num_objs,
+        self.score_net = ScoreNetTangram(marginal_prob_std_func=self.marginal_prob_std_fn,
+                                     num_objs=self.num_objs,
                                      device=self.device)
         self.score_net.to(self.device)
         state_dict = torch.load(path_state_dict)
@@ -159,13 +149,14 @@ class TarGF_Tangram_Ball:
         omegas: List[np.ndarray] = []
         with torch.no_grad():
             original_omega: torch.Tensor = _dataset.dataset_omega[data_index]   # (7, 3)
-            omegas += [original_omega.cpu().numpy()]
+            original_omega = original_omega.view(1, 7 * 3)
+            omegas += [original_omega.view(7, 3).cpu().numpy()]
             # Add perturbance
             z = torch.randn_like(original_omega)
-            std = self.marginal_prob_std_fn(0.01).repeat(1, self.num_objs).view(-1, 1)
+            std = self.marginal_prob_std_fn(0.01)
             perturbance: torch.Tensor = z * std
             perturbed_omega: torch.Tensor = original_omega + perturbance
-            omegas += [perturbed_omega.cpu().numpy()]
+            omegas += [perturbed_omega.view(7, 3).cpu().numpy()]
             # Rearrange tangram pieces
             done = False
             i = 0
@@ -176,7 +167,7 @@ class TarGF_Tangram_Ball:
                 delta_omega /= 500 * torch.max(torch.abs(delta_omega))
                 # Update omega
                 perturbed_omega += delta_omega
-                omegas += [perturbed_omega.cpu().numpy()]
+                omegas += [perturbed_omega.view(7, 3).cpu().numpy()]
 
                 i += 1
                 if i == 300:
@@ -189,17 +180,16 @@ class TarGF_Tangram_Ball:
             cv2.imwrite(f'{os.path.join(path_save_visualization, "images")}/{i}.png', img)
         images_to_video(os.path.join(path_save_visualization, "inference_process.mp4"),
                         frames,
-                        [30,] + [1,] * (len(frames) - 1),
+                        [30, 30] + [1,] * (len(frames) - 1),
                         30)
 
     def __inference(self, model, omega: torch.Tensor, t: float) -> torch.Tensor:
         omega = copy.deepcopy(omega.to(self.device))
-        # -> (batch_size * num_objs, 3)
-        edge_index: torch.Tensor = knn_graph(omega, k=self.num_objs-1, loop=False).to(self.device)
+        # -> (batch_size, num_objs * 3)
         _t: torch.Tensor = torch.tensor([t]).view(-1, 1).to(self.device)
 
-        score = model(omega, edge_index, _t, self.num_objs)
-        # -> (batch_size * num_objs, 3)
+        score = model(omega, _t, self.num_objs)
+        # -> (batch_size, num_objs * 3)
         return score
 
 
