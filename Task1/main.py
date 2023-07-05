@@ -1,17 +1,32 @@
-from network.sde import marginal_prob_std
-from targf import Dataset_KILOGRAM, TarGF_Tangram_Ball
+import sys
+import os
+
+import tomli
+
+from targf import TarGF_Tangram
 
 def main():
-    # TODO: Ask what is `sigma`
-    targf = TarGF_Tangram_Ball(sigma=25,
-                               path_kilogram_dataset='./kilogram/parsed.json',
-                               is_json=True,
-                               learning_rate=0.0002,
-                               batch_size=1016,
-                               num_epochs=500000)
-    targf.train(log_save_dir='./logs/')
-    targf.test('logs/score_net_epoch_499999.pt', 'logs/process_visualization/', 0)
-    pass
+    if len(sys.argv) < 2:
+        print('Usage: python3 main.py <path_to_config>')
+        exit()
+    
+    path_config: str = sys.argv[1]
+
+    targf = TarGF_Tangram(sigma=25,
+                          path_kilogram_dataset='./kilogram/parsed.json',
+                          is_json=True,)
+
+    with open(path_config, 'rb') as fp:
+        config = tomli.load(fp)
+    log_save_dir: str = f'./logs/log_{config["config_name"]}'
+
+    num_epochs: int = config['training']['num_epochs']
+    targf.train(config=config, log_save_dir=log_save_dir)
+    targf.test(config,
+               os.path.join(log_save_dir, f'score_net_epoch_{num_epochs - 1}.pt'),
+               os.path.join(log_save_dir, 'process_visualization/'),
+               0)
+
 
 if __name__ == '__main__':
     main()

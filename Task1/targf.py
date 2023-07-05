@@ -20,75 +20,88 @@ from visualization.visualize_tangrams import draw_tangrams, images_to_video
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-class TarGF_Tangram_Ball:
+class TarGF_Tangram:
     """ Wraps the DSM (Denoising Score-Matching) model's training & inference
     """
     def __init__(self, sigma, path_kilogram_dataset,
-                 num_objs=7, is_json=False, batch_size=1016,
-                 num_epochs=10000, learning_rate=0.0002, betas=(0.5, 0.999),
+                 num_objs=7, is_json=False, betas=(0.5, 0.999),
                  device=DEVICE) -> None:
         self.marginal_prob_std_fn = functools.partial(marginal_prob_std, sigma=sigma, device=device)
         self.diffusion_coeff_fn = functools.partial(diffusion_coeff, sigma=sigma, device=device)
         self.num_objs = num_objs
 
-        # Parameters for training
-        self.num_epochs = num_epochs
-        self.learning_rate = learning_rate
+        # Parameter for training
         self.betas = betas
 
         self.path_kilogram_dataset = path_kilogram_dataset
         self.is_json = is_json
-        self.batch_size = batch_size
         self.device = device
 
-    def train(self, log_save_dir: str) -> None:
         # Prepare dataset
         # All data are loaded into RAM (of self.device) here
         print('Loading dataset...')
-        _dataset = Dataset_KILOGRAM(self.path_kilogram_dataset, self.is_json, self.device)
-        dataloader = DataLoader(_dataset, batch_size=self.batch_size, shuffle=True)
+        self._dataset = Dataset_KILOGRAM(self.path_kilogram_dataset, self.is_json, self.device)
         print('Done.')
+
+
+    def train(self, config: dict, log_save_dir: str) -> None:
+        # Expand config - model
+        num_fc_layers = config['model']['num_fc_layers']
+        hidden_dim = config['model']['hidden_dim']
+        embed_dim = config['model']['embed_dim']
+        # Expand config - training
+        learning_rate = config['training']['learning_rate']
+        num_epochs = config['training']['num_epochs']
+        batch_size = config['training']['batch_size']
+
+        # Create dataloader
+        self.dataloader = DataLoader(self._dataset, batch_size=batch_size, shuffle=True)
 
         # Create model and optimizer
         print('Creating model and optimizer...')
-        self.score_net = ScoreNetTangram(marginal_prob_std_func=self.marginal_prob_std_fn,
-                                     num_objs=self.num_objs,
-                                     device=self.device)
-        self.score_net.to(self.device)
-        self.optimizer = optim.Adam(self.score_net.parameters(), lr=self.learning_rate, betas=self.betas)
+        score_net = ScoreNetTangram(marginal_prob_std_func=self.marginal_prob_std_fn,
+                                    num_objs=self.num_objs,
+                                    device=self.device,
+                                    num_fc_layers=num_fc_layers,
+                                    hidden_dim=hidden_dim,
+                                    embed_dim=embed_dim)
+        score_net.to(self.device)
+        optimizer = optim.Adam(score_net.parameters(), lr=learning_rate, betas=self.betas)
         print('Done.')
 
         # Training loop
-        all_losses = []
-        for epoch in trange(self.num_epochs):
-            avg_loss = 0.0
-            num_items = 0
+        losses_per_epoch = []
+        model_dict_path: str = ''
+        for epoch in trange(num_epochs):
             # Iterate batches
-            for i, data in enumerate(dataloader):
-                omega = data.view(self.batch_size, self.num_objs * 3)
-                loss = self.__loss_fn(self.score_net, omega)
-
-                self.optimizer.zero_grad()
-                loss.backward()
-                self.optimizer.step()
-
-                all_losses += [loss.item()]
-                avg_loss += loss.item() * self.batch_size
-                num_items += self.batch_size
-            #print('Average Loss: {:5f}'.format(avg_loss / num_items))
+            for _, data in enumerate(self.dataloader):
+                omega = data.view(batch_size, self.num_objs * 3)
+                loss: float = self.__train_one_epoch(score_net, omega, optimizer, batch_size)
+                losses_per_epoch += [loss]
             # TODO: Evaluation
             # Save model
             if (epoch + 1) % 500 == 0:
                 os.system(f'mkdir -p {log_save_dir}')
-                torch.save(self.score_net.state_dict(),
-                           os.path.join(log_save_dir, f'score_net_epoch_{epoch}.pt'))
+                if os.path.exists(model_dict_path):
+                    os.remove(model_dict_path)
+                model_dict_path = os.path.join(log_save_dir, f'score_net_epoch_{epoch}.pt')
+                torch.save(score_net.state_dict(), model_dict_path)
                 with open(os.path.join(log_save_dir, 'training_log_losses.txt'), 'w') as fp:
-                    for loss in all_losses:
+                    for loss in losses_per_epoch:
                         fp.write(f'{loss}\n')
             pass
         pass
 
-    def __loss_fn(self, model, omega, eps=1e-5):
+    def __train_one_epoch(self, model, omega, optimizer, batch_size: int) -> float:
+        loss = self.__loss_fn(model, omega, batch_size)
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        return loss.item()
+
+    def __loss_fn(self, model, omega, batch_size: int, eps=1e-5):
         """The loss function for training score-based generative models.
 
         Parameters:
@@ -100,7 +113,7 @@ class TarGF_Tangram_Ball:
         omega = omega.to(self.device)
         # -> (batch_size, num_objs * 3)
 
-        random_t = torch.rand(self.batch_size, device=self.device) * (1. - eps) + eps
+        random_t = torch.rand(batch_size, device=self.device) * (1. - eps) + eps
         random_t = random_t.unsqueeze(-1)
         # -> (batch_size, 1)
 
@@ -124,31 +137,33 @@ class TarGF_Tangram_Ball:
         return loss
 
     def test(self,
+             config: dict,
              path_state_dict: str,
              path_save_visualization: str,
              data_index: int) -> None:
-        # Prepare dataset
-        # All data are loaded into RAM (of self.device) here
-        print('Loading dataset...')
-        _dataset = Dataset_KILOGRAM(self.path_kilogram_dataset, self.is_json, self.device)
-        dataloader = DataLoader(_dataset, batch_size=1, shuffle=False)
-        print('Done.')
+        # Expand config - model
+        num_fc_layers = config['model']['num_fc_layers']
+        hidden_dim = config['model']['hidden_dim']
+        embed_dim = config['model']['embed_dim']
 
         # Loading model
         print('Loading model...')
-        self.score_net = ScoreNetTangram(marginal_prob_std_func=self.marginal_prob_std_fn,
-                                     num_objs=self.num_objs,
-                                     device=self.device)
-        self.score_net.to(self.device)
+        score_net = ScoreNetTangram(marginal_prob_std_func=self.marginal_prob_std_fn,
+                                    num_objs=self.num_objs,
+                                    device=self.device,
+                                    num_fc_layers=num_fc_layers,
+                                    hidden_dim=hidden_dim,
+                                    embed_dim=embed_dim)
+        score_net.to(self.device)
         state_dict = torch.load(path_state_dict)
-        self.score_net.load_state_dict(state_dict)
-        self.score_net.eval()
+        score_net.load_state_dict(state_dict)
+        score_net.eval()
         print('Done.')
 
         # Inference
         omegas: List[np.ndarray] = []
         with torch.no_grad():
-            original_omega: torch.Tensor = _dataset.dataset_omega[data_index]   # (7, 3)
+            original_omega: torch.Tensor = self._dataset.dataset_omega[data_index]  # (7, 3)
             original_omega = original_omega.view(1, 7 * 3)
             omegas += [original_omega.view(7, 3).cpu().numpy()]
             # Add perturbance
@@ -162,7 +177,7 @@ class TarGF_Tangram_Ball:
             i = 0
             while not done:
                 # Calculate score
-                delta_omega: torch.Tensor = self.__inference(self.score_net, perturbed_omega, 0.01)
+                delta_omega: torch.Tensor = self.__inference(score_net, perturbed_omega, 0.01)
                 # Normalize output
                 delta_omega /= 500 * torch.max(torch.abs(delta_omega))
                 # Update omega

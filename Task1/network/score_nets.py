@@ -3,6 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 
+from typing import List
+
 from torch_geometric.nn import EdgeConv
 from torch.nn.parameter import Parameter
 
@@ -26,7 +28,13 @@ class ScoreNetTangram(nn.Module):
     Ref: [TarGF/networks/score_nets.py:107]
 
     """
-    def __init__(self, marginal_prob_std_func, num_objs=7, device=DEVICE, hidden_dim=64, embed_dim=32):
+    def __init__(self,
+                 marginal_prob_std_func,
+                 num_objs=7,
+                 device=DEVICE,
+                 num_fc_layers=4,
+                 hidden_dim=64,
+                 embed_dim=32):
         super().__init__()
 
         self.device = device
@@ -45,85 +53,28 @@ class ScoreNetTangram(nn.Module):
             nn.Linear(embed_dim, embed_dim),
         )
 
-        # mlp1
-        # input shape: (batch_size, hidden_dim)
-        self.mlp1 = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(True),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(True)
-        )
+        '''
+        A list of FC layers
+        '''
+        _fc_list: List[nn.Module] = []
+        # input shape = (batch_size, hidden_dim)
+        _fc_list += [
+                        nn.Sequential(
+                            nn.Linear(hidden_dim, hidden_dim),
+                            nn.ReLU(True)
+                        )
+                    ]
         # -> (batch_size, hidden_dim)
-
-        # mlp2
         # input shape = (batch_size, hidden_dim + embed_dim)
-        self.mlp2 = nn.Sequential(
-            nn.Linear(hidden_dim + embed_dim, hidden_dim),
-            nn.ReLU(True),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(True)
-        )
+        _fc_list += [
+                        nn.Sequential(
+                            nn.Linear(hidden_dim + embed_dim, hidden_dim),
+                            nn.ReLU(True)
+                        )
+                        for i in range(num_fc_layers - 1)
+                    ]
         # -> (batch_size, hidden_dim)
-
-        # mlp3
-        # input shape = (batch_size, hidden_dim + embed_dim)
-        self.mlp3 = nn.Sequential(
-            nn.Linear(hidden_dim + embed_dim, hidden_dim),
-            nn.ReLU(True),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(True)
-        )
-        # -> (batch_size, hidden_dim)
-
-        # mlp4
-        # input shape = (batch_size, hidden_dim + embed_dim)
-        self.mlp4 = nn.Sequential(
-            nn.Linear(hidden_dim + embed_dim, hidden_dim),
-            nn.ReLU(True),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(True)
-        )
-        # -> (batch_size, hidden_dim)
-
-        # mlp5
-        # input shape = (batch_size, hidden_dim + embed_dim)
-        self.mlp5 = nn.Sequential(
-            nn.Linear(hidden_dim + embed_dim, hidden_dim),
-            nn.ReLU(True),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(True)
-        )
-        # -> (batch_size, hidden_dim)
-
-        # mlp6
-        # input shape = (batch_size, hidden_dim + embed_dim)
-        self.mlp6 = nn.Sequential(
-            nn.Linear(hidden_dim + embed_dim, hidden_dim),
-            nn.ReLU(True),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(True)
-        )
-        # -> (batch_size, hidden_dim)
-
-        # mlp7
-        # input shape = (batch_size, hidden_dim + embed_dim)
-        self.mlp7 = nn.Sequential(
-            nn.Linear(hidden_dim + embed_dim, hidden_dim),
-            nn.ReLU(True),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(True)
-        )
-        # -> (batch_size, hidden_dim)
-
-        # mlp8
-        # input shape = (batch_size, hidden_dim + embed_dim)
-        self.mlp8 = nn.Sequential(
-            nn.Linear(hidden_dim + embed_dim, hidden_dim),
-            nn.ReLU(True),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(True)
-        )
-        # -> (batch_size, hidden_dim)
+        self.fc_list: nn.ModuleList = nn.ModuleList(_fc_list)
 
         # mlp_end
         # input shape = (batch_size, hidden_dim + embed_dim)
@@ -161,22 +112,10 @@ class ScoreNetTangram(nn.Module):
         # -> (batch_size, embed_dim)
 
         # Start message passing from init-feature
-        x = self.mlp1(init_feature)
-        x = torch.cat([x, x_sigma], dim=-1)
-        x = self.mlp2(x)
-        x = torch.cat([x, x_sigma], dim=-1)
-        x = self.mlp3(x)
-        x = torch.cat([x, x_sigma], dim=-1)
-        x = self.mlp4(x)
-        x = torch.cat([x, x_sigma], dim=-1)
-        x = self.mlp5(x)
-        x = torch.cat([x, x_sigma], dim=-1)
-        x = self.mlp6(x)
-        x = torch.cat([x, x_sigma], dim=-1)
-        x = self.mlp7(x)
-        x = torch.cat([x, x_sigma], dim=-1)
-        x = self.mlp8(x)
-        x = torch.cat([x, x_sigma], dim=-1)
+        x = init_feature
+        for layer in self.fc_list:
+            x = layer(x)
+            x = torch.cat([x, x_sigma], dim=-1)
         x = self.mlp_end(x)
         # -> (batch_size, num_obj * 3)
 
