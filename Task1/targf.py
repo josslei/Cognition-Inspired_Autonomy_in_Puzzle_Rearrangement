@@ -1,6 +1,8 @@
 import os
 import functools
 import numpy as np
+
+import tqdm
 from tqdm import trange
 
 import torch
@@ -113,7 +115,7 @@ class TarGF_Tangram:
         omega = omega.to(self.device)
         # -> (batch_size, num_objs * 3)
 
-        random_t = torch.rand(batch_size, device=self.device) * (1. - eps) + eps
+        random_t = torch.rand(batch_size, device=self.device) * (0.05) + eps
         random_t = random_t.unsqueeze(-1)
         # -> (batch_size, 1)
 
@@ -140,7 +142,24 @@ class TarGF_Tangram:
              config: dict,
              path_state_dict: str,
              path_save_visualization: str,
-             data_index: int) -> None:
+             data_index: int,
+             num_steps: int = 500,
+             eps: float = 1e-3) -> None:
+        """ Test a visualize a sample
+
+        Args:
+            config (dict): _description_
+            path_state_dict (str): _description_
+            path_save_visualization (str): _description_
+            data_index (int): _description_
+            num_steps (int, optional): the number of sampling steps.
+                Defaults to 500.
+            eps (float, optional): the smallest time step for numerical
+                stability. Defaults to 1e-3.
+        
+        Ref: Song Yang's blog
+        [link](https://colab.research.google.com/drive/120kYYBOVa1i0TD85RjlEkFjaWDxSFUx3)
+        """
         # Expand config - model
         num_fc_layers = config['model']['num_fc_layers']
         hidden_dim = config['model']['hidden_dim']
@@ -160,50 +179,54 @@ class TarGF_Tangram:
         score_net.eval()
         print('Done.')
 
-        # Inference
+        '''
+        Euler-Maruyama sampler
+        '''
         omegas: List[np.ndarray] = []
+        # Target data
+        original_omega: torch.Tensor = self._dataset.dataset_omega[data_index]  # (7, 3)
+        original_omega = original_omega.view(1, 7 * 3)
+        omegas += [original_omega.view(7, 3).cpu().numpy()]
+        # Add perturbance
+        #t = 0.331   # marginal_prob_std = 1
+        t = 0.05
+        speed_up_coef = 10
+        z = torch.randn_like(original_omega)
+        std = self.marginal_prob_std_fn(t)
+        perturbance: torch.Tensor = z * std
+        perturbed_omega: torch.Tensor = original_omega + perturbance
+        omegas += [perturbed_omega.view(7, 3).cpu().numpy()]
+        # Define steps
+        time_steps = torch.linspace(t, eps, num_steps, device=self.device)
+        step_size = time_steps[0] - time_steps[1]
+        # Rearrange tangram pieces
+        print('Rearranging...')
         with torch.no_grad():
-            original_omega: torch.Tensor = self._dataset.dataset_omega[data_index]  # (7, 3)
-            original_omega = original_omega.view(1, 7 * 3)
-            omegas += [original_omega.view(7, 3).cpu().numpy()]
-            # Add perturbance
-            z = torch.randn_like(original_omega)
-            std = self.marginal_prob_std_fn(0.01)
-            perturbance: torch.Tensor = z * std
-            perturbed_omega: torch.Tensor = original_omega + perturbance
-            omegas += [perturbed_omega.view(7, 3).cpu().numpy()]
-            # Rearrange tangram pieces
-            done = False
-            i = 0
-            while not done:
-                # Calculate score
-                delta_omega: torch.Tensor = self.__inference(score_net, perturbed_omega, 0.01)
-                # Normalize output
-                delta_omega /= 500 * torch.max(torch.abs(delta_omega))
-                # Update omega
-                perturbed_omega += delta_omega
+            for time_step in tqdm.tqdm(time_steps):
+                batch_time_step: torch.Tensor = torch.tensor([1.]).view(-1, 1).to(self.device)
+                batch_time_step *= time_step
+                g = self.diffusion_coeff_fn(batch_time_step)
+                # Iterate one step
+                perturbed_omega += speed_up_coef * (g**2) * self.__inference(score_net, perturbed_omega, batch_time_step) * step_size
+                perturbed_omega += speed_up_coef * torch.sqrt(step_size) * g * (torch.randn_like(perturbed_omega) / 1000)
                 omegas += [perturbed_omega.view(7, 3).cpu().numpy()]
 
-                i += 1
-                if i == 300:
-                    done = True
-
         # Visualization
+        print('Visualizing results...')
         frames = draw_tangrams(omegas=omegas[:], canvas_length=1000)
         os.system(f'mkdir -p {os.path.join(path_save_visualization, "images")}')
         for i, img in enumerate(frames):
             cv2.imwrite(f'{os.path.join(path_save_visualization, "images")}/{i}.png', img)
         images_to_video(os.path.join(path_save_visualization, "inference_process.mp4"),
                         frames,
-                        [30, 30] + [1,] * (len(frames) - 1),
+                        [30, 30] + [1,] * (len(frames) - 3) + [60],
                         30)
 
-    def __inference(self, model, omega: torch.Tensor, t: float) -> torch.Tensor:
+    def __inference(self, model, omega: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         omega = copy.deepcopy(omega.to(self.device))
         # -> (batch_size, num_objs * 3)
-        _t: torch.Tensor = torch.tensor([t]).view(-1, 1).to(self.device)
 
-        score = model(omega, _t, self.num_objs)
+        score = model(omega, t, self.num_objs)
         # -> (batch_size, num_objs * 3)
         return score
 
@@ -243,8 +266,9 @@ class Dataset_KILOGRAM(Dataset):
             Tuple[torch.Tensor, torch.Tensor]: Omega
                 Shape of omega: (7, 3)
         """
-        #return self.dataset_omega[index]
-        return self.dataset_omega[0]
+        amount: int = 1016
+        choose: List[int] = list(range(amount))
+        return self.dataset_omega[choose[index % amount]]
 
     def __len__(self) -> int:
         return len(self.dataset_omega)

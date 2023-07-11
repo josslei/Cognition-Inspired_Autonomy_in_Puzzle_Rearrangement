@@ -2,6 +2,7 @@ import sys
 import os
 
 import tomli
+import numpy as np
 
 from targf import TarGF_Tangram
 
@@ -22,10 +23,11 @@ def main():
 
     num_epochs: int = config['training']['num_epochs']
     targf.train(config=config, log_save_dir=log_save_dir)
-    targf.test(config,
-               os.path.join(log_save_dir, f'score_net_epoch_{num_epochs - 1}.pt'),
-               os.path.join(log_save_dir, 'process_visualization/'),
-               0)
+    for i in range(20):
+        targf.test(config,
+                   os.path.join(log_save_dir, f'score_net_epoch_{num_epochs - 1}.pt'),
+                   os.path.join(log_save_dir, f'process_visualization_{i}/'),
+                   i)
 
 
 if __name__ == '__main__':
