@@ -9,3 +9,5 @@ embed_dim = 32
 learning_rate = 0.0002
 num_epochs = 500000
 batch_size = 1016
+t_max = 0.05
+t_decay = false
