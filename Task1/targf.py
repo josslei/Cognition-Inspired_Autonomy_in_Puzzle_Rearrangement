@@ -15,6 +15,7 @@ import copy
 import json
 import cv2
 
+import samplers
 from network.score_nets import ScoreNetTangram
 from network.sde import marginal_prob_std, diffusion_coeff
 from visualization.read_kilogram import read_kilogram
@@ -179,56 +180,37 @@ class TarGF_Tangram:
         score_net.eval()
         print('Done.')
 
-        '''
-        Euler-Maruyama sampler
-        '''
-        omegas: List[np.ndarray] = []
+        omega_sequences: List[List[np.ndarray]] = []
         # Target data
         original_omega: torch.Tensor = self._dataset.dataset_omega[data_index]  # (7, 3)
         original_omega = original_omega.view(1, 7 * 3)
-        omegas += [original_omega.view(7, 3).cpu().numpy()]
+        samplers.append_omega_batch(omega_sequences, original_omega)
         # Add perturbance
-        #t = 0.331   # marginal_prob_std = 1
-        t = 0.05
-        speed_up_coef = 10
+        t_final = 0.05
         z = torch.randn_like(original_omega)
-        std = self.marginal_prob_std_fn(t)
+        std = self.marginal_prob_std_fn(t_final)
         perturbance: torch.Tensor = z * std
         perturbed_omega: torch.Tensor = original_omega + perturbance
-        omegas += [perturbed_omega.view(7, 3).cpu().numpy()]
-        # Define steps
-        time_steps = torch.linspace(t, eps, num_steps, device=self.device)
-        step_size = time_steps[0] - time_steps[1]
-        # Rearrange tangram pieces
-        print('Rearranging...')
-        with torch.no_grad():
-            for time_step in tqdm.tqdm(time_steps):
-                batch_time_step: torch.Tensor = torch.tensor([1.]).view(-1, 1).to(self.device)
-                batch_time_step *= time_step
-                g = self.diffusion_coeff_fn(batch_time_step)
-                # Iterate one step
-                perturbed_omega += speed_up_coef * (g**2) * self.__inference(score_net, perturbed_omega, batch_time_step) * step_size
-                perturbed_omega += speed_up_coef * torch.sqrt(step_size) * g * (torch.randn_like(perturbed_omega) / 1000)
-                omegas += [perturbed_omega.view(7, 3).cpu().numpy()]
-
-        # Visualization
+        samplers.append_omega_batch(omega_sequences, perturbed_omega)
+        # Euler-Maruyama sampler
+        samplers.euler_maruyama_sampler(model=score_net,
+                                        diffusion_coeff_fn=self.diffusion_coeff_fn,
+                                        omega=perturbed_omega,
+                                        omega_sequences=omega_sequences,
+                                        t_final=t_final,
+                                        num_steps=num_steps,
+                                        eps=eps)
+        # Save results
+        print('Saving results...')
+        # TODO
         print('Visualizing results...')
-        frames = draw_tangrams(omegas=omegas[:], canvas_length=1000)
-        os.system(f'mkdir -p {os.path.join(path_save_visualization, "images")}')
-        for i, img in enumerate(frames):
-            cv2.imwrite(f'{os.path.join(path_save_visualization, "images")}/{i}.png', img)
-        images_to_video(os.path.join(path_save_visualization, "inference_process.mp4"),
-                        frames,
-                        [30, 30] + [1,] * (len(frames) - 3) + [60],
-                        30)
-
-    def __inference(self, model, omega: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-        omega = copy.deepcopy(omega.to(self.device))
-        # -> (batch_size, num_objs * 3)
-
-        score = model(omega, t, self.num_objs)
-        # -> (batch_size, num_objs * 3)
-        return score
+        for i, o in enumerate(omega_sequences):
+            frames = draw_tangrams(omegas=o, canvas_length=1000)
+            cv2.imwrite(os.path.join(path_save_visualization, f'{i}/result.png'), frames[-1])
+            images_to_video(os.path.join(path_save_visualization, f'{i}/inference_process.mp4'),
+                            frames,
+                            [30, 30] + [1,] * (len(frames) - 3) + [60],
+                            30)
 
 
 class Dataset_KILOGRAM(Dataset):
