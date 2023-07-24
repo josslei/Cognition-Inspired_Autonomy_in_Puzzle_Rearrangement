@@ -1,6 +1,8 @@
 import os
 import functools
 import numpy as np
+
+import tqdm
 from tqdm import trange
 
 import torch
@@ -14,225 +16,202 @@ import copy
 import json
 import cv2
 
-from network.score_nets import ScoreNetGNN
+import samplers
+from network.score_nets import ScoreNetTangram
 from network.sde import marginal_prob_std, diffusion_coeff
 from visualization.read_kilogram import read_kilogram
 from visualization.visualize_tangrams import draw_tangrams, images_to_video
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-class TarGF_Tangram_Ball:
+class TarGF_Tangram:
     """ Wraps the DSM (Denoising Score-Matching) model's training & inference
     """
     def __init__(self, sigma, path_kilogram_dataset,
-                 num_objs=7, is_json=False, batch_size=1016,
-                 num_epochs=10000, learning_rate=0.0002, betas=(0.5, 0.999),
+                 num_objs=7, is_json=False, betas=(0.5, 0.999),
                  device=DEVICE) -> None:
         self.marginal_prob_std_fn = functools.partial(marginal_prob_std, sigma=sigma, device=device)
         self.diffusion_coeff_fn = functools.partial(diffusion_coeff, sigma=sigma, device=device)
         self.num_objs = num_objs
 
-        # Parameters for training
-        self.num_epochs = num_epochs
-        self.learning_rate = learning_rate
+        # Parameter for training
         self.betas = betas
 
         self.path_kilogram_dataset = path_kilogram_dataset
         self.is_json = is_json
-        self.batch_size = batch_size
         self.device = device
 
-    def train(self) -> None:
         # Prepare dataset
         # All data are loaded into RAM (of self.device) here
         print('Loading dataset...')
-        _dataset = Dataset_KILOGRAM(self.path_kilogram_dataset, self.is_json, self.device)
-        dataloader = DataLoader(_dataset, batch_size=self.batch_size, shuffle=True)
+        self._dataset = Dataset_KILOGRAM(self.path_kilogram_dataset, self.is_json, self.device)
         print('Done.')
+
+
+    def train(self, config: dict, log_save_dir: str) -> None:
+        # Expand config - model
+        num_fc_layers = config['model']['num_fc_layers']
+        hidden_dim = config['model']['hidden_dim']
+        embed_dim = config['model']['embed_dim']
+        # Expand config - training
+        learning_rate = config['training']['learning_rate']
+        num_epochs = config['training']['num_epochs']
+        batch_size = config['training']['batch_size']
+
+        # Create dataloader
+        self.dataloader = DataLoader(self._dataset, batch_size=batch_size, shuffle=True)
 
         # Create model and optimizer
         print('Creating model and optimizer...')
-        self.score_net = ScoreNetGNN(marginal_prob_std_func=self.marginal_prob_std_fn,
-                                     num_classes=self.num_objs,
-                                     device=self.device)
-        self.score_net.to(self.device)
-        self.optimizer = optim.Adam(self.score_net.parameters(), lr=self.learning_rate, betas=self.betas)
+        score_net = ScoreNetTangram(marginal_prob_std_func=self.marginal_prob_std_fn,
+                                    num_objs=self.num_objs,
+                                    device=self.device,
+                                    num_fc_layers=num_fc_layers,
+                                    hidden_dim=hidden_dim,
+                                    embed_dim=embed_dim)
+        score_net.to(self.device)
+        optimizer = optim.Adam(score_net.parameters(), lr=learning_rate, betas=self.betas)
         print('Done.')
 
         # Training loop
-        losses_per_batch = []
-        for epoch in trange(self.num_epochs):
+        losses_per_epoch = []
+        model_dict_path: str = ''
+        for epoch in trange(num_epochs):
             # Iterate batches
-            for i, data in enumerate(dataloader):
-                omega = data.view(self.batch_size * self.num_objs, -1)
-                loss: float = self.__train_one_batch(self.score_net, omega, self.optimizer)
-                losses_per_batch += [loss]
+            for _, data in enumerate(self.dataloader):
+                omega = data.view(batch_size, self.num_objs * 3)
+                loss: float = self.__train_one_epoch(score_net, omega, optimizer, batch_size)
+                losses_per_epoch += [loss]
             # TODO: Evaluation
             # Save model
             if (epoch + 1) % 500 == 0:
-                os.system('mkdir -p ./logs/')
-                torch.save(self.score_net.state_dict(), f'./logs/score_net_epoch_{epoch}.pt')
-                with open('./logs/training_log_losses.txt', 'w') as fp:
-                    for loss in losses_per_batch:
+                os.system(f'mkdir -p {log_save_dir}')
+                if os.path.exists(model_dict_path):
+                    os.remove(model_dict_path)
+                model_dict_path = os.path.join(log_save_dir, f'score_net_epoch_{epoch}.pt')
+                torch.save(score_net.state_dict(), model_dict_path)
+                with open(os.path.join(log_save_dir, 'training_log_losses.txt'), 'w') as fp:
+                    for loss in losses_per_epoch:
                         fp.write(f'{loss}\n')
             pass
         pass
 
-    def __train_one_batch(self, model, omega, optimizer, r_range: Tuple[int, int] = (5, 7)) -> float:
-        loss_list: List[float] = []
-        loss_value: float = 0.0
-        #for r in range(1, 7):
-        for r in range(*r_range):
-            for mask in combinations([0, 1, 2, 3, 4, 5, 6], r):
-                loss = self.__loss_fn(self.score_net, omega, mask)
+    def __train_one_epoch(self, model, omega, optimizer, batch_size: int) -> float:
+        loss = self.__loss_fn(model, omega, batch_size)
 
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
 
-                loss_list += [loss.item()]
-        loss_value = sum(loss_list) / len(loss_list)
-        return loss_value
+        return loss.item()
 
-    def __loss_fn(self, model, omega, mask, eps=1e-5):
+    def __loss_fn(self, model, omega, batch_size: int, eps=1e-5):
         """The loss function for training score-based generative models.
 
         Parameters:
-            model: A PyTorch model instance that represents a time-dependent
-                score-based model.
-            omega: A batch of training data.
-                Shape = (batch_size*num_objs, 3)
-            edge_index: A batch of fc graphs.
-                Shape = (2, batch_size*num_objs*(num_objs-1))
-            marginal_prob_std: A function that gives the standard deviation
-                of the perturbation kernel.
-            mask: A list of integer, each is an index (0 ~ 6) indicates
-                a piece that is "masked". A masked piece will not be
-                perturbed.
+            model: A PyTorch model instance that represents a time-dependent score-based model.
+            omega: A batch of training data. Shape = (batch_size, num_objs * 3)
+            marginal_prob_std: A function that gives the standard deviation of the perturbation kernel.
             eps: A tolerance value for numerical stability.
         """
         omega = omega.to(self.device)
-        # -> (batch_size * num_objs, 3)
+        # -> (batch_size, num_objs * 3)
 
-        random_t = torch.rand(self.batch_size, device=self.device) * (1. - eps) + eps
+        random_t = torch.rand(batch_size, device=self.device) * (0.05) + eps
         random_t = random_t.unsqueeze(-1)
         # -> (batch_size, 1)
 
-        #z_position = (torch.randn_like(omega[:,:2]) - 0.5) * 2*omega[:, :2].max()
-        ## -> (batch_size * num_objs, 2), interval: [-omega[:,:2].max(), omega[:,:2].max())
-        #z_orientation = (torch.randn_like(omega[:,2:]) - 0.5) * 2*np.pi
-        ## -> (batch_size * num_objs, 2), interval: [-pi, pi)
-        #z = torch.cat([z_position, z_orientation], dim=-1)
-        z: torch.Tensor = torch.randn_like(omega)
-        # -> (batch_size * num_objs, 3)
-        z = self.__mask_perturbance(z, mask, self.batch_size, self.device)
+        z = torch.randn_like(omega)
+        # -> (batch_size, num_objs * 3)
 
-        std = self.marginal_prob_std_fn(random_t)   # -> (batch_size, 1) (shape = random_t.shape)
-        std = std.repeat(1, self.num_objs)          # -> (batch_size, num_objs)
-        std = std.view(-1, 1)
-        # -> (batch_size * num_objs, 1)
+        std = self.marginal_prob_std_fn(random_t)
+        # -> (batch_size, 1) (shape = random_t.shape)
 
         perturbed_omega = copy.deepcopy(omega)  # Can't use torch.clone() because it syncs gradients
-        perturbed_omega += z * std  # (batch_size * num_objs, 3) * (batch_size * num_objs, 1)
-        # -> (batch_size * num_objs, 3)
-        edge_index = knn_graph(perturbed_omega, k=self.num_objs-1, loop=False).to(self.device)
-        # -> (2, batch_size * num_objs * (num_objs - 1))
+        perturbed_omega += z * std  # (batch_size, num_objs * 3) * (batch_size, 1)
+        # -> (batch_size, num_objs * 3)
 
-        score = model(perturbed_omega, edge_index, random_t, self.num_objs)
-        # -> (batch_size * num_objs, 3)
+        score = model(perturbed_omega, random_t, self.num_objs)
+        # -> (batch_size, num_objs * 3)
 
         #loss = torch.mean(torch.sum(((score * std + z)**2).view(self.batch_size, -1), dim=-1))
-        loss = (score * std + z)**2             # -> (batch_size * num_objs, 3)
-        loss = loss.view(self.batch_size, -1)   # -> (batch_size, 3 * num_objs)
+        loss = (score * std + z)**2             # -> (batch_size, num_objs * 3)
         loss = torch.mean(torch.sum(loss, dim=-1))
         # -> () 0-dimension scalar
         return loss
 
     def test(self,
+             config: dict,
              path_state_dict: str,
              path_save_visualization: str,
              data_index: int,
-             mask: List[int]) -> None:
-        # Prepare dataset
-        # All data are loaded into RAM (of self.device) here
-        print('Loading dataset...')
-        _dataset = Dataset_KILOGRAM(self.path_kilogram_dataset, self.is_json, self.device)
-        dataloader = DataLoader(_dataset, batch_size=1, shuffle=False)
-        print('Done.')
+             num_steps: int = 500,
+             eps: float = 1e-3) -> None:
+        """ Test a visualize a sample
+
+        Args:
+            config (dict): _description_
+            path_state_dict (str): _description_
+            path_save_visualization (str): _description_
+            data_index (int): _description_
+            num_steps (int, optional): the number of sampling steps.
+                Defaults to 500.
+            eps (float, optional): the smallest time step for numerical
+                stability. Defaults to 1e-3.
+        
+        Ref: Song Yang's blog
+        [link](https://colab.research.google.com/drive/120kYYBOVa1i0TD85RjlEkFjaWDxSFUx3)
+        """
+        # Expand config - model
+        num_fc_layers = config['model']['num_fc_layers']
+        hidden_dim = config['model']['hidden_dim']
+        embed_dim = config['model']['embed_dim']
 
         # Loading model
         print('Loading model...')
-        self.score_net = ScoreNetGNN(marginal_prob_std_func=self.marginal_prob_std_fn,
-                                     num_classes=self.num_objs,
-                                     device=self.device)
-        self.score_net.to(self.device)
+        score_net = ScoreNetTangram(marginal_prob_std_func=self.marginal_prob_std_fn,
+                                    num_objs=self.num_objs,
+                                    device=self.device,
+                                    num_fc_layers=num_fc_layers,
+                                    hidden_dim=hidden_dim,
+                                    embed_dim=embed_dim)
+        score_net.to(self.device)
         state_dict = torch.load(path_state_dict)
-        self.score_net.load_state_dict(state_dict)
-        self.score_net.eval()
+        score_net.load_state_dict(state_dict)
+        score_net.eval()
         print('Done.')
 
-        # Inference
-        omegas: List[np.ndarray] = []
-        with torch.no_grad():
-            original_omega: torch.Tensor = _dataset.dataset_omega[data_index]   # (7, 3)
-            omegas += [original_omega.cpu().numpy()]
-            # Add perturbance
-            z = torch.randn_like(original_omega)
-            z = self.__mask_perturbance(z, mask, 1, self.device)
-            std = self.marginal_prob_std_fn(0.01).repeat(1, self.num_objs).view(-1, 1)
-            perturbance: torch.Tensor = z * std
-            perturbed_omega: torch.Tensor = original_omega + perturbance
-            omegas += [perturbed_omega.cpu().numpy()]
-            # Rearrange tangram pieces
-            done = False
-            i = 0
-            while not done:
-                # Calculate score
-                delta_omega: torch.Tensor = self.__inference(self.score_net, perturbed_omega, 0.01)
-                # Normalize output
-                delta_omega /= 500 * torch.max(torch.abs(delta_omega))
-                # Update omega
-                perturbed_omega += delta_omega
-                omegas += [perturbed_omega.cpu().numpy()]
-
-                i += 1
-                if i == 300:
-                    done = True
-
-        # Visualization
-        frames = draw_tangrams(omegas=omegas[:], canvas_length=1000)
-        os.system(f'mkdir -p {os.path.join(path_save_visualization, "images")}')
-        for i, img in enumerate(frames):
-            cv2.imwrite(f'{os.path.join(path_save_visualization, "images")}/{i}.png', img)
-        images_to_video(os.path.join(path_save_visualization, "inference_process.mp4"),
-                        frames,
-                        [30,] + [1,] * (len(frames) - 1),
-                        30)
-
-    def __inference(self, model, omega: torch.Tensor, t: float) -> torch.Tensor:
-        omega = copy.deepcopy(omega.to(self.device))
-        # -> (batch_size * num_objs, 3)
-        edge_index: torch.Tensor = knn_graph(omega, k=self.num_objs-1, loop=False).to(self.device)
-        _t: torch.Tensor = torch.tensor([t]).view(-1, 1).to(self.device)
-
-        score = model(omega, edge_index, _t, self.num_objs)
-        # -> (batch_size * num_objs, 3)
-        return score
-    
-    def __mask_perturbance(self,
-                           z: torch.Tensor,
-                           mask: List[int],
-                           bs: int,
-                           device=DEVICE) -> torch.Tensor:
-        masked_indices: torch.Tensor = torch.zeros([len(mask) * bs,],
-                                                    dtype=torch.int64,
-                                                    device=device)
-        i = 0
-        for j in mask:
-            for k in range(bs):
-                masked_indices[i] = len(mask) * k + j
-                i += 1
-        return z.index_fill(0, masked_indices, 0)
+        omega_sequences: List[List[np.ndarray]] = []
+        # Target data
+        original_omega: torch.Tensor = self._dataset.dataset_omega[data_index]  # (7, 3)
+        original_omega = original_omega.view(1, 7 * 3)
+        samplers.append_omega_batch(omega_sequences, original_omega)
+        # Add perturbance
+        t_final = 0.05
+        z = torch.randn_like(original_omega)
+        std = self.marginal_prob_std_fn(t_final)
+        perturbance: torch.Tensor = z * std
+        perturbed_omega: torch.Tensor = original_omega + perturbance
+        samplers.append_omega_batch(omega_sequences, perturbed_omega)
+        # Euler-Maruyama sampler
+        samplers.euler_maruyama_sampler(model=score_net,
+                                        diffusion_coeff_fn=self.diffusion_coeff_fn,
+                                        omega=perturbed_omega,
+                                        omega_sequences=omega_sequences,
+                                        t_final=t_final,
+                                        num_steps=num_steps,
+                                        eps=eps)
+        # Save results
+        print('Saving results...')
+        # TODO
+        print('Visualizing results...')
+        for i, o in enumerate(omega_sequences):
+            frames = draw_tangrams(omegas=o, canvas_length=1000)
+            cv2.imwrite(os.path.join(path_save_visualization, f'{i}/result.png'), frames[-1])
+            images_to_video(os.path.join(path_save_visualization, f'{i}/inference_process.mp4'),
+                            frames,
+                            [30, 30] + [1,] * (len(frames) - 3) + [60],
+                            30)
 
 
 class Dataset_KILOGRAM(Dataset):
@@ -270,8 +249,9 @@ class Dataset_KILOGRAM(Dataset):
             Tuple[torch.Tensor, torch.Tensor]: Omega
                 Shape of omega: (7, 3)
         """
-        #return self.dataset_omega[index]
-        return self.dataset_omega[0]
+        amount: int = 1016
+        choose: List[int] = list(range(amount))
+        return self.dataset_omega[choose[index % amount]]
 
     def __len__(self) -> int:
         return len(self.dataset_omega)
