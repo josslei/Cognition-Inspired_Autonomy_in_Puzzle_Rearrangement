@@ -206,6 +206,7 @@ class TarGF_Tangram:
         # TODO
         print('Visualizing results...')
         for i, o in enumerate(omega_sequences):
+            os.system(f'mkdir -p {os.path.join(path_save_visualization, str(i))}')
             frames = draw_tangrams(omegas=o, canvas_length=1000)
             cv2.imwrite(os.path.join(path_save_visualization, f'{i}/result.png'), frames[-1])
             images_to_video(os.path.join(path_save_visualization, f'{i}/inference_process.mp4'),

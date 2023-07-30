@@ -55,9 +55,10 @@ def euler_maruyama_sampler(model: torch.nn.Module,
 def append_omega_batch(omega_sequences: List[List[np.ndarray]], batch: torch.Tensor) -> None:
     batch_size: int = batch.shape[0]
     for i, omega in enumerate(batch):
-        if len(omega_sequences) <= i:
-            omega_sequences += []
-        omega_sequences[i] += [omega.view(7, 3).cpu().numpy()]
+        if len(omega_sequences) <= i + 1:
+            omega_sequences += [[omega.view(7, 3).cpu().numpy()]]
+        else:
+            omega_sequences[i] += [omega.view(7, 3).cpu().numpy()]
     pass
 
 

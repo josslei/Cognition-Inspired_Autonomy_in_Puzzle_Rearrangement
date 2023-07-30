@@ -114,8 +114,7 @@ def draw_tangrams(omegas: List[np.ndarray],
     for i, tangram in enumerate(tangram_vertices):
         omega: np.ndarray = np.concatenate([omegas[i][:, :2], omegas[i][:, 2:]], axis=-1)
         assert(omega.shape[0] == 7 and omega.shape[1] == 3)
-        img = draw_one_tangram(tangram=tangram,
-                               omega=omega,
+        img = draw_one_tangram(omega=omega,
                                scale=coef,
                                origin=origin,
                                canvas_size=canvas_size,
@@ -130,8 +129,7 @@ def draw_tangrams(omegas: List[np.ndarray],
     return frames
 
 
-def draw_one_tangram(tangram: Dict[str, List[np.ndarray]],
-                     omega: np.ndarray,
+def draw_one_tangram(omega: np.ndarray,
                      scale: float,
                      origin: Tuple[int, int],
                      canvas_size: Tuple[int, int],
@@ -172,7 +170,7 @@ def draw_one_tangram(tangram: Dict[str, List[np.ndarray]],
     if orientation_vector_length >= 0:
         vec_len = orientation_vector_length
     basis_vector: np.matrix = np.matrix([0.0, 1.0]).T * vec_len
-    for piece_id in tangram.keys():
+    for piece_id in ['1', '2', '3', '4', '5', '6', '7']:
         id_index = int(piece_id) - 1
         draw_piece(img=img,
                    piece_id=piece_id,
