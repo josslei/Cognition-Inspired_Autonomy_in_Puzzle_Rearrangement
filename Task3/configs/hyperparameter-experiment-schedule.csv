@@ -1,0 +1,5 @@
+model.num_fc_layers,training.learning_rate,training.batch_size
+4,0.02,127
+8,0.002,508
+16,0.0002,1016
+,0.00002,
