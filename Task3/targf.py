@@ -2,16 +2,13 @@ import os
 import functools
 import numpy as np
 
-import tqdm
 from tqdm import trange
 
 import torch
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
-from torch_geometric.nn import knn_graph
 
-from itertools import combinations
-from typing import Tuple, List
+from typing import List
 import copy
 import json
 import cv2
@@ -24,9 +21,11 @@ from visualization.visualize_tangrams import draw_tangrams, images_to_video
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+
 class TarGF_Tangram:
     """ Wraps the DSM (Denoising Score-Matching) model's training & inference
     """
+
     def __init__(self, sigma, path_kilogram_dataset,
                  num_objs=7, is_json=False, betas=(0.5, 0.999),
                  device=DEVICE) -> None:
@@ -46,7 +45,6 @@ class TarGF_Tangram:
         print('Loading dataset...')
         self._dataset = Dataset_KILOGRAM(self.path_kilogram_dataset, self.is_json, self.device)
         print('Done.')
-
 
     def train(self, config: dict, log_save_dir: str) -> None:
         # Expand config - model
@@ -158,7 +156,7 @@ class TarGF_Tangram:
                 Defaults to 500.
             eps (float, optional): the smallest time step for numerical
                 stability. Defaults to 1e-3.
-        
+
         Ref: Song Yang's blog
         [link](https://colab.research.google.com/drive/120kYYBOVa1i0TD85RjlEkFjaWDxSFUx3)
         """

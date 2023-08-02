@@ -128,7 +128,7 @@ def tuple_2x2_dot_3x3_homogeneous(tuple_2x2: Tuple[float, float],
                                   homogeneous: np.matrix) -> Tuple[float, float]:
     x: np.matrix = np.matrix([tuple_2x2[0], tuple_2x2[1], 1]).T
     x = homogeneous * x
-    print((float(x[0]), float(x[1])))
+    #print((float(x[0]), float(x[1])))
     return (float(x[0]), float(x[1]))
 
 # accuracy: 1e-9

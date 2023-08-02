@@ -2,15 +2,15 @@ import sys
 import os
 
 import tomli
-import numpy as np
 
 from targf import TarGF_Tangram
+
 
 def main():
     if len(sys.argv) < 2:
         print('Usage: python3 main.py <path_to_config>')
         exit()
-    
+
     path_config: str = sys.argv[1]
 
     targf = TarGF_Tangram(sigma=25,
