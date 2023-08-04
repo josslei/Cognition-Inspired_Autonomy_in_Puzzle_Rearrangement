@@ -61,10 +61,11 @@ class ScoreNetTangram(nn.Module):
         A list of FC layers
         '''
         _fc_list: List[nn.Module] = []
-        # input shape = (batch_size, hidden_dim)
+        # input shape = (batch_size, hidden_dim + embed_dim)
+        # input: init_feature + cnn_feature
         _fc_list += [
                         nn.Sequential(
-                            nn.Linear(hidden_dim, hidden_dim),
+                            nn.Linear(hidden_dim + embed_dim, hidden_dim),
                             nn.ReLU(True)
                         )
                     ]
@@ -92,11 +93,12 @@ class ScoreNetTangram(nn.Module):
         self.marginal_prob_std = marginal_prob_std_func
         pass
 
-    def forward(self, omega, t, num_objs=None) -> torch.Tensor:
+    def forward(self, omega, cnn_feature, t, num_objs=None) -> torch.Tensor:
         """ Network forward
 
         Args:
             omega (torch.Tensor): state of tangram pieces, shape = (batch_size, num_objs * 3)
+            cnn_feature (torch.Tensor): image feature extracted by cnn, shape = (batch_size, embed_dim)
             t (torch.Tensor): time instant(s), shape = (batch_size, 1)
             num_objs (int): number of objects, in this case is the number of tangram pieces
         """
@@ -112,7 +114,7 @@ class ScoreNetTangram(nn.Module):
         # -> (batch_size, embed_dim)
 
         # Start message passing from init-feature
-        x = init_feature
+        x = torch.cat([init_feature, cnn_feature], dim=-1)
         for layer in self.fc_list:
             x = layer(x)
             x = torch.cat([x, x_sigma], dim=-1)

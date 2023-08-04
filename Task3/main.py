@@ -13,13 +13,11 @@ def main():
 
     path_config: str = sys.argv[1]
 
-    targf = TarGF_Tangram(sigma=25,
-                          path_kilogram_dataset='./kilogram/parsed.json',
-                          is_json=True,)
-
     with open(path_config, 'rb') as fp:
         config = tomli.load(fp)
     log_save_dir: str = f'./logs/log_{config["config_name"]}'
+
+    targf = TarGF_Tangram(config=config)
 
     num_epochs: int = config['training']['num_epochs']
     targf.train(config=config, log_save_dir=log_save_dir)

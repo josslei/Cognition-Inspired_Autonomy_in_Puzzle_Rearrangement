@@ -16,3 +16,4 @@ __pycache__/
 # Ignore logs, outputs, & datasets
 logs/
 all_tangrams/
+concrete_images/

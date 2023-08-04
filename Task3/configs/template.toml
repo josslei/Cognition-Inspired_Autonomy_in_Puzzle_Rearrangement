@@ -1,9 +1,20 @@
 config_name = 'template'
 
-[model]
+[dataset]
+path_kilogram = './kilogram/dataset/'
+path_concrete_images = './concrete_images/'
+
+[score_net]
 num_fc_layers = 4
 hidden_dim = 64
 embed_dim = 32
+
+[cnn_backbone]
+model = 'VGG16'
+
+[segmentation_model]
+model_type = 'vit_h'
+checkpoint = 'sam_vit_h_4b8939.pth'
 
 [training]
 learning_rate = 0.0002
