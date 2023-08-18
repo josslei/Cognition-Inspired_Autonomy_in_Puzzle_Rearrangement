@@ -21,9 +21,10 @@ def main():
 
     num_epochs: int = config['training']['num_epochs']
     targf.train(config=config, log_save_dir=log_save_dir)
-    for i in range(20):
+    for i in range(9):
         targf.test(config,
                    os.path.join(log_save_dir, f'score_net_epoch_{num_epochs - 1}.pt'),
+                   os.path.join(log_save_dir, f'cnn_backbone_epoch_{num_epochs - 1}.pt'),
                    os.path.join(log_save_dir, f'process_visualization_{i}/'),
                    i)
 

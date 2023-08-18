@@ -5,17 +5,23 @@ import torchvision
 
 class VGG16(nn.Module):
     """ VGG16 backbone.
-    Suggested input size: (448, 448) or (224, 224).
+    Suggested input size: (224, 224).
     """
 
-    def __init__(self, embed_dim: int = 32):
+    def __init__(self, config: dict, embed_dim: int = 32):
         super().__init__()
+        # Expand config
+        batch_norm: bool = config['cnn_backbone']['batch_norm']
+        pretrained: bool = config['cnn_backbone']['pretrained'] if 'pretrained' in config['cnn_backbone'].keys() else False
 
-        # pretrained_vgg16: nn.Module = torchvision.models.vgg16_bn(pretrained=True)
-        pretrained_vgg16: nn.Module = torchvision.models.vgg16(pretrained=True)
+        _vgg16: nn.Module
+        if batch_norm:
+            _vgg16 = torchvision.models.vgg16_bn(pretrained=pretrained)
+        else:
+            _vgg16 = torchvision.models.vgg16(pretrained=pretrained)
 
-        self.features: nn.Module = pretrained_vgg16.features
-        self.avgpool: nn.Module = pretrained_vgg16.avgpool
+        self.features: nn.Module = _vgg16.features
+        self.avgpool: nn.Module = _vgg16.avgpool
 
         self.embedding = nn.Sequential(
             nn.Linear(25088, embed_dim),
@@ -26,5 +32,6 @@ class VGG16(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.features(x)
         x = self.avgpool(x)
+        x = torch.flatten(x, 1)
         x = self.embedding(x)
         return x

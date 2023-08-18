@@ -74,7 +74,7 @@ def draw_tangrams(omegas: List[np.ndarray],
             R_theta: np.matrix = rotation_matrix_2d_from_theta(theta)
             piece: List[np.ndarray] = []
             for vertex in PIECE_SHAPE_TEMPLATES[piece_id]:
-                vertex: np.ndarray = np.array(vertex) / TANGRAM_DATA_MAX
+                vertex: np.ndarray = np.array(vertex) / TANGRAM_DATA_MAX # type: ignore
                 vertex = np.asarray(R_theta * np.matrix(vertex).T).squeeze()
                 vertex = vertex + o[id_index][:2]
                 piece += [vertex]
@@ -219,7 +219,7 @@ def draw_piece(img: np.ndarray,
     vertices: List[np.ndarray] = []
     R_theta: np.matrix = rotation_matrix_2d_from_theta(orientation)
     for v in PIECE_SHAPE_TEMPLATES[piece_id]:
-        v: np.ndarray = np.array(v) * scale / TANGRAM_DATA_MAX
+        v: np.ndarray = np.array(v) * scale / TANGRAM_DATA_MAX # type: ignore
         v = np.asarray(R_theta * np.matrix(v).T).squeeze()
         v = v + position
         vertices += [v]

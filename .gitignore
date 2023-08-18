@@ -7,13 +7,16 @@
 # Unignore all dirs
 !*/
 
-# ignore IDE caches
+# Ignore IDE caches
 .vscode
 
-# ignore Python cache
+# Ignore Python cache
 __pycache__/
+
+# Ignore model checkpoints
+*.pth
 
 # Ignore logs, outputs, & datasets
 logs/
 all_tangrams/
-concrete_images/
+images/

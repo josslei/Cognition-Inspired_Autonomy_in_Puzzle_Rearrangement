@@ -1,9 +1,9 @@
-config_name = 'template'
+config_name = 'bs9_simple_cnn_6_layers_no_pretrain_random_image_concrete_input'
 
 [dataset]
 path_kilogram = './kilogram/dataset/'
 path_concrete_images = './images/'
-input_image_type = 'segmentation'
+input_image_type = 'concrete'
 
 [score_net]
 num_fc_layers = 4
@@ -24,6 +24,6 @@ checkpoint = 'sam_vit_h_4b8939.pth'
 [training]
 learning_rate = 0.0002
 num_epochs = 500000
-batch_size = 9
+batch_size = 36
 t_max = 0.05
 t_decay = false
