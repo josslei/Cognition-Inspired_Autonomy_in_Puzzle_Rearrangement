@@ -26,9 +26,9 @@ class Data:
         random.shuffle(self.__selection_list)
 
     def get_one(self) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        assert type(self.omega) is not type(None)
-        assert type(self.concrete_images) is not type(None)
-        assert type(self.segmentation_images) is not type(None)
+        assert self.omega is not None
+        assert self.concrete_images is not None
+        assert self.segmentation_images is not None
         assert len(self.concrete_images) == len(self.segmentation_images) # type: ignore
         if self.__selection_count == len(self.__selection_list): # type: ignore
             random.shuffle(self.__selection_list)

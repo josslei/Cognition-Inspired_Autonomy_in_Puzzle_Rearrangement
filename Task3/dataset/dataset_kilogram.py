@@ -74,7 +74,7 @@ class Dataset_KILOGRAM(Dataset):
         self.DATA_MAX = 2 + 7 * np.sqrt(2) + np.sqrt(5)
         for i, _ in enumerate(self.data_list):
             # Normalize positions and orientations
-            assert type(self.data_list[i].omega) is not type(None)
+            assert self.data_list[i].omega is not None
             for piece_id, piece in enumerate(self.data_list[i].omega): # type: ignore
                 self.data_list[i].omega[piece_id][0] = piece[0] / self.DATA_MAX # type: ignore
                 self.data_list[i].omega[piece_id][1] = piece[1] / self.DATA_MAX # type: ignore
@@ -93,8 +93,8 @@ class Dataset_KILOGRAM(Dataset):
             Tuple[torch.Tensor, torch.Tensor]: Omega
                 Shape of omega: (7, 3)
         """
-        assert type(self.data_list[index].omega) is not type(None)
-        assert type(self.data_list[index].segmentation_images) is not type(None)
+        assert self.data_list[index].omega is not None
+        assert self.data_list[index].segmentation_images is not None
         _omega: torch.Tensor; _segmentation_image: torch.Tensor
         _omega, _concrete_image, _segmentation_image = self.data_list[index].get_one()
         return _omega, _concrete_image.to(self.device), _segmentation_image.to(self.device)
