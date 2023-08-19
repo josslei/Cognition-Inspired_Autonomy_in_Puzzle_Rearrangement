@@ -37,8 +37,8 @@ class TarGF_Tangram:
                  num_objs: int = 7,
                  betas: Tuple[float, float] = (0.5, 0.999),
                  device: torch.device = DEVICE) -> None:
-        self.marginal_prob_std_fn = functools.partial(marginal_prob_std, sigma=sigma, device=device)
-        self.diffusion_coeff_fn = functools.partial(diffusion_coeff, sigma=sigma, device=device)
+        self.marginal_prob_std_fn = functools.partial(marginal_prob_std, sigma=sigma)
+        self.diffusion_coeff_fn = functools.partial(diffusion_coeff, sigma=sigma)
         self.num_objs = num_objs
 
         # Parameter for training
@@ -165,9 +165,6 @@ class TarGF_Tangram:
             marginal_prob_std: A function that gives the standard deviation of the perturbation kernel.
             eps: A tolerance value for numerical stability.
         """
-        omega = omega.to(self.device)
-        # -> (batch_size, num_objs * 3)
-
         random_t = torch.rand(batch_size, device=self.device) * (1. - eps) + eps
         random_t = random_t.unsqueeze(-1)
         # -> (batch_size, 1)
@@ -254,7 +251,7 @@ class TarGF_Tangram:
         original_omega = original_omega.view(1, 7 * 3)
         samplers.append_omega_batch(omega_sequences, original_omega)
         # Add perturbance
-        t_final = 0.05
+        t_final: torch.Tensor = torch.tensor([0.05], device=self.device)
         z = torch.randn_like(original_omega)
         std = self.marginal_prob_std_fn(t_final)
         perturbance: torch.Tensor = z * std
@@ -268,7 +265,7 @@ class TarGF_Tangram:
                                                  input_images=input_images,
                                                  omega=perturbed_omega,
                                                  omega_sequences=omega_sequences,
-                                                 t_final=t_final,
+                                                 t_final=t_final.item(),
                                                  num_steps=num_steps,
                                                  eps=eps)
         # Evaluation
