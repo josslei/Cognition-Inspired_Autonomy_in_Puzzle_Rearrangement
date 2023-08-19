@@ -85,6 +85,7 @@ class Dataset_KILOGRAM(Dataset):
         #
         del self.segmentation_model
         del self.mask_generator
+        torch.cuda.empty_cache()
         return
 
     def __getitem__(self, index: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
