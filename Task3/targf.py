@@ -10,7 +10,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from torchvision import transforms
 
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 import copy
 import cv2
 
@@ -35,7 +35,6 @@ class TarGF_Tangram:
                  config: dict,
                  sigma: float = 25,
                  num_objs: int = 7,
-                 is_json: bool = False,
                  betas: Tuple[float, float] = (0.5, 0.999),
                  device: torch.device = DEVICE) -> None:
         self.marginal_prob_std_fn = functools.partial(marginal_prob_std, sigma=sigma, device=device)
@@ -75,7 +74,7 @@ class TarGF_Tangram:
         batch_size: int = config['training']['batch_size']
 
         # Create dataloader
-        self.dataloader = DataLoader(self._dataset, batch_size=batch_size, shuffle=False)
+        self.dataloader = DataLoader(self._dataset, batch_size=batch_size, shuffle=True)
 
         # Create models and optimizer
         print('Creating models and optimizer...')
@@ -215,6 +214,8 @@ class TarGF_Tangram:
         Ref: Song Yang's blog
         [link](https://colab.research.google.com/drive/120kYYBOVa1i0TD85RjlEkFjaWDxSFUx3)
         """
+        # Expand config - dataset
+        input_image_type: str = config['dataset']['input_image_type']   # 'concrete' or 'segmentation'
         # Expand config - score_net
         num_fc_layers = config['score_net']['num_fc_layers']
         hidden_dim = config['score_net']['hidden_dim']
@@ -246,8 +247,9 @@ class TarGF_Tangram:
         omega_sequences: List[List[np.ndarray]] = []
         # Target data
         original_omega: torch.Tensor = self._dataset.data_list[data_index].omega # type: ignore
-        concrete_images: np.ndarray = self._dataset.data_list[data_index].concrete_images[0] # type: ignore
+        concrete_images: np.ndarray = self._dataset.data_list[data_index].concrete_images[0].unsqueeze(0) # type: ignore
         segmentation_images: torch.Tensor = self._dataset.data_list[data_index].segmentation_images[0].unsqueeze(0) # type: ignore
+        input_images: torch.Tensor = eval(input_image_type + '_images') # 'concrete' or 'segmentation'
         # -> (7, 3)
         original_omega = original_omega.view(1, 7 * 3)
         samplers.append_omega_batch(omega_sequences, original_omega)
@@ -259,11 +261,11 @@ class TarGF_Tangram:
         perturbed_omega: torch.Tensor = original_omega + perturbance
         samplers.append_omega_batch(omega_sequences, perturbed_omega)
         # Euler-Maruyama sampler
-        result: List[np.ndarray] = []
+        result: torch.Tensor
         result = samplers.euler_maruyama_sampler(score_net_model=score_net,
                                                  cnn_backbone=cnn_backbone,
                                                  diffusion_coeff_fn=self.diffusion_coeff_fn,
-                                                 segmentation_images=segmentation_images,
+                                                 input_images=input_images,
                                                  omega=perturbed_omega,
                                                  omega_sequences=omega_sequences,
                                                  t_final=t_final,
@@ -271,8 +273,8 @@ class TarGF_Tangram:
                                                  eps=eps)
         # Evaluation
         print('Evaluating...')
-        errors: List[float]
-        errors = evaluator.evaluate(torch.Tensor(result), original_omega, self.device) # type: ignore
+        errors: List[Dict[str, float]]
+        errors = evaluator.evaluate(result, original_omega, self.device) # type: ignore
         # Save results
         print('Saving results...')
         # TODO
@@ -280,8 +282,10 @@ class TarGF_Tangram:
         for i, o in enumerate(omega_sequences):
             os.system(f'mkdir -p {os.path.join(path_save_visualization, str(i))}')
             # Quantified result
-            with open(os.path.join(path_save_visualization, f'{i}/evaluation.txt'), 'w') as fp:
-                fp.write(f'error:{errors[i]}\n')
+            fp = open(os.path.join(path_save_visualization, f'{i}/evaluation.txt'), 'w')
+            for key in errors[i].keys():
+                fp.write(f'{key}:{errors[i][key]}\n')
+            fp.close()
             # Visualized result
             frames = draw_tangrams(omegas=o, canvas_length=1000)
             cv2.imwrite(os.path.join(path_save_visualization, f'{i}/result.png'), frames[-1])

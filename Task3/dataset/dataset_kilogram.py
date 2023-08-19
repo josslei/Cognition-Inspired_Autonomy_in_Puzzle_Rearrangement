@@ -97,7 +97,7 @@ class Dataset_KILOGRAM(Dataset):
         assert self.data_list[index].segmentation_images is not None
         _omega: torch.Tensor; _segmentation_image: torch.Tensor
         _omega, _concrete_image, _segmentation_image = self.data_list[index].get_one()
-        return _omega, _concrete_image.to(self.device), _segmentation_image.to(self.device)
+        return _omega, _concrete_image, _segmentation_image
 
     def __len__(self) -> int:
         return len(self.data_list)
