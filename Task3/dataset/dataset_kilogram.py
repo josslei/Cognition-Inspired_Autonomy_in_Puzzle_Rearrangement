@@ -82,6 +82,7 @@ class Dataset_KILOGRAM(Dataset):
 
         # Trick the dataloader to make the dataset recursively iterable
         self.data_list = self.data_list * int(batch_size / len(self.data_list))
+        self.data_list = self.data_list * 10    # Make 10 iters an epoch
         #
         del self.segmentation_model
         del self.mask_generator

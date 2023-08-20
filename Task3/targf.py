@@ -86,14 +86,16 @@ class TarGF_Tangram:
                                     embed_dim=embed_dim)
         if score_net_checkpoint != '':
             state_dict_score_net = torch.load(score_net_checkpoint)
-            score_net.load_state_dict(state_dict_score_net)
+            score_net.load_state_dict(state_dict_score_net, strict=False)
         score_net.to(self.device)
         cnn_backbone: nn.Module = eval(cnn_backbone_model)(config=config, embed_dim=embed_dim)
         if cnn_backbone_checkpoint != '':
             state_dict_cnn_backbone = torch.load(cnn_backbone_checkpoint)
             cnn_backbone.load_state_dict(state_dict_cnn_backbone)
         cnn_backbone.to(self.device)
-        optimizer = optim.Adam(score_net.parameters(), lr=learning_rate, betas=self.betas)
+        optimizer = optim.Adam([{'params': score_net.parameters(),
+                                 'params': cnn_backbone.parameters()}],
+                               lr=learning_rate, betas=self.betas)
         print('Done.')
 
         ## Cache all data
@@ -109,11 +111,13 @@ class TarGF_Tangram:
         #exit()
 
         # Training loop
-        losses_per_epoch = []
+        avg_losses_per_epoch: List[float] = []
         score_net_dict_path: str = ''
         cnn_backbone_dict_path: str = ''
         for epoch in trange(num_epochs):
             # Iterate batches
+            _avg_loss: float = 0.0
+            _num_iters: int = 0
             for _, data in enumerate(self.dataloader):
                 omega: torch.Tensor = data[0].view(batch_size, self.num_objs * 3)
                 concrete_images: torch.Tensor = data[1]
@@ -125,7 +129,9 @@ class TarGF_Tangram:
                                                      input_images=input_images,
                                                      optimizer=optimizer,
                                                      batch_size=batch_size)
-                losses_per_epoch += [loss]
+                _avg_loss += loss
+                _num_iters += 1
+            avg_losses_per_epoch += [_avg_loss / _num_iters]
             # TODO: Evaluation
             # Save model
             if (epoch + 1) % 500 == 0:
@@ -139,7 +145,7 @@ class TarGF_Tangram:
                 torch.save(score_net.state_dict(), score_net_dict_path)
                 torch.save(cnn_backbone.state_dict(), cnn_backbone_dict_path)
                 with open(os.path.join(log_save_dir, 'training_log_losses.txt'), 'w') as fp:
-                    for loss in losses_per_epoch:
+                    for loss in avg_losses_per_epoch:
                         fp.write(f'{loss}\n')
             pass
         pass

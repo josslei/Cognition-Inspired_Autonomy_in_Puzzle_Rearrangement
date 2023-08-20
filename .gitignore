@@ -15,6 +15,7 @@ __pycache__/
 
 # Ignore model checkpoints
 *.pth
+*.pt
 
 # Ignore logs, outputs, & datasets
 logs/
