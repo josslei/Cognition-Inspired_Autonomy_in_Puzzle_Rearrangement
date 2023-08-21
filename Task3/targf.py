@@ -11,6 +11,7 @@ from torch.utils.data import DataLoader
 from torchvision import transforms
 
 from typing import List, Tuple, Dict
+from itertools import chain
 import copy
 import cv2
 
@@ -93,8 +94,7 @@ class TarGF_Tangram:
             state_dict_cnn_backbone = torch.load(cnn_backbone_checkpoint)
             cnn_backbone.load_state_dict(state_dict_cnn_backbone)
         cnn_backbone.to(self.device)
-        optimizer = optim.Adam([{'params': score_net.parameters(),
-                                 'params': cnn_backbone.parameters()}],
+        optimizer = optim.Adam(params=chain(cnn_backbone.parameters(), score_net.parameters()),
                                lr=learning_rate, betas=self.betas)
         print('Done.')
 
@@ -291,6 +291,7 @@ class TarGF_Tangram:
             fp.close()
             # Visualized result
             frames = draw_tangrams(omegas=o, canvas_length=1000)
+            cv2.imwrite(os.path.join(path_save_visualization, f'{i}/gt.png'), frames[0])
             cv2.imwrite(os.path.join(path_save_visualization, f'{i}/result.png'), frames[-1])
             _concrete_img: np.ndarray = cv2.resize(concrete_images[0].cpu().numpy().astype(np.uint8), frames[0].shape[:2])
             _segmentation_img: np.ndarray = cv2.resize(segmentation_images[0].cpu().numpy().astype(np.uint8), frames[0].shape[:2])
