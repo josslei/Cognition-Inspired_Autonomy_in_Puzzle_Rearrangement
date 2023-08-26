@@ -2,13 +2,15 @@ import torch
 import torch.nn as nn
 import torchvision
 
+from typing import Tuple
+
 
 class VGG16(nn.Module):
     """ VGG16 backbone.
     Suggested input size: (224, 224).
     """
 
-    def __init__(self, config: dict, embed_dim: int = 32):
+    def __init__(self, config: dict, embed_dim: int = 32, num_class: int = 1016):
         super().__init__()
         # Expand config
         batch_norm: bool = config['cnn_backbone']['batch_norm']
@@ -28,10 +30,16 @@ class VGG16(nn.Module):
             nn.ReLU(True),
             nn.Linear(embed_dim, embed_dim)
         )
+        self.auxiliary = nn.Sequential(
+            nn.Linear(25088, embed_dim),
+            nn.ReLU(True),
+            nn.Linear(embed_dim, num_class)
+        )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         x = self.features(x)
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
-        x = self.embedding(x)
-        return x
+        x_embedding: torch.Tensor = self.embedding(x)
+        x_auxiliary: torch.Tensor = self.auxiliary(x)
+        return x_embedding, x_auxiliary

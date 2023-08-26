@@ -36,6 +36,7 @@ class Dataset_KILOGRAM(Dataset):
         self.transforms = transforms
         self.path_concrete_images: str = path_concrete_images
         self.device = device
+        self.num_class: int = 0
 
         # Segmentation model
         self.segmentation_model: nn.Module = sam_model_registry[segmentation_model_model_type](checkpoint=segmentation_model_checkpoint).to(self.device)
@@ -67,9 +68,11 @@ class Dataset_KILOGRAM(Dataset):
             if type(concrete_images) is type(None) or type(segmentation_images) is type(None):
                 continue
             self.data_list += [Data(id=tk,
+                                    class_label=self.num_class,
                                     omega=_omega,
                                     concrete_images=concrete_images,
                                     segmentation_images=segmentation_images)]
+            self.num_class += 1
         # Normalization
         self.DATA_MAX = 2 + 7 * np.sqrt(2) + np.sqrt(5)
         for i, _ in enumerate(self.data_list):
@@ -89,7 +92,7 @@ class Dataset_KILOGRAM(Dataset):
         torch.cuda.empty_cache()
         return
 
-    def __getitem__(self, index: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def __getitem__(self, index: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, int]:
         """
         Returns:
             Tuple[torch.Tensor, torch.Tensor]: Omega
@@ -97,9 +100,10 @@ class Dataset_KILOGRAM(Dataset):
         """
         assert self.data_list[index].omega is not None
         assert self.data_list[index].segmentation_images is not None
-        _omega: torch.Tensor; _segmentation_image: torch.Tensor
+        _omega: torch.Tensor; _concrete_image: torch.Tensor; _segmentation_image: torch.Tensor; _class_label: int
         _omega, _concrete_image, _segmentation_image = self.data_list[index].get_one()
-        return _omega, _concrete_image, _segmentation_image
+        _class_label = self.data_list[index].class_label
+        return _omega, _concrete_image, _segmentation_image, _class_label
 
     def __len__(self) -> int:
         return len(self.data_list)

@@ -10,10 +10,12 @@ import time
 class Data:
     def __init__(self,
                  id: str,
+                 class_label: int,
                  omega: Union[torch.Tensor, None],
                  concrete_images: Union[List[torch.Tensor], None],
                  segmentation_images: Union[List[torch.Tensor], None]):
         self.id: str = id
+        self.class_label: int = class_label
         self.omega: Union[torch.Tensor, None] = omega
         self.concrete_images: Union[List[torch.Tensor], None] = concrete_images
         self.segmentation_images: Union[List[torch.Tensor], None] = segmentation_images

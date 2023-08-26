@@ -6,6 +6,7 @@ from tqdm import trange
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from torchvision import transforms
@@ -89,7 +90,9 @@ class TarGF_Tangram:
             state_dict_score_net = torch.load(score_net_checkpoint)
             score_net.load_state_dict(state_dict_score_net, strict=False)
         score_net.to(self.device)
-        cnn_backbone: nn.Module = eval(cnn_backbone_model)(config=config, embed_dim=embed_dim)
+        cnn_backbone: nn.Module = eval(cnn_backbone_model)(config=config,
+                                                           embed_dim=embed_dim,
+                                                           num_class=self._dataset.num_class)
         if cnn_backbone_checkpoint != '':
             state_dict_cnn_backbone = torch.load(cnn_backbone_checkpoint)
             cnn_backbone.load_state_dict(state_dict_cnn_backbone)
@@ -111,27 +114,34 @@ class TarGF_Tangram:
         #exit()
 
         # Training loop
-        avg_losses_per_epoch: List[float] = []
+        avg_losses_per_epoch_score_net: List[float] = []
+        avg_losses_per_epoch_cnn_auxiliary: List[float] = []
         score_net_dict_path: str = ''
         cnn_backbone_dict_path: str = ''
         for epoch in trange(num_epochs):
             # Iterate batches
-            _avg_loss: float = 0.0
+            _avg_loss_score_net: float = 0.0
+            _avg_loss_cnn_auxiliary: float = 0.0
             _num_iters: int = 0
             for _, data in enumerate(self.dataloader):
                 omega: torch.Tensor = data[0].view(batch_size, self.num_objs * 3)
                 concrete_images: torch.Tensor = data[1]
                 segmentation_images: torch.Tensor = data[2]
+                class_labels: torch.Tensor = data[3].to(self.device)
                 input_images: torch.Tensor = eval(input_image_type + '_images') # 'concrete' or 'segmentation'
-                loss: float = self.__train_one_epoch(model=score_net,
-                                                     cnn_backbone=cnn_backbone,
-                                                     omega=omega,
-                                                     input_images=input_images,
-                                                     optimizer=optimizer,
-                                                     batch_size=batch_size)
-                _avg_loss += loss
+                loss_score_net: float; loss_cnn_auxiliary: float
+                loss_score_net, loss_cnn_auxiliary = self.__train_one_epoch(model=score_net,
+                                                                            cnn_backbone=cnn_backbone,
+                                                                            omega=omega,
+                                                                            input_images=input_images,
+                                                                            class_labels=class_labels,
+                                                                            optimizer=optimizer,
+                                                                            batch_size=batch_size)
+                _avg_loss_score_net += loss_score_net
+                _avg_loss_cnn_auxiliary += loss_cnn_auxiliary
                 _num_iters += 1
-            avg_losses_per_epoch += [_avg_loss / _num_iters]
+            avg_losses_per_epoch_score_net += [_avg_loss_score_net / _num_iters]
+            avg_losses_per_epoch_cnn_auxiliary += [_avg_loss_cnn_auxiliary / _num_iters]
             # TODO: Evaluation
             # Save model
             if (epoch + 1) % 500 == 0:
@@ -144,22 +154,33 @@ class TarGF_Tangram:
                 cnn_backbone_dict_path = os.path.join(log_save_dir, f'cnn_backbone_epoch_{epoch}.pt')
                 torch.save(score_net.state_dict(), score_net_dict_path)
                 torch.save(cnn_backbone.state_dict(), cnn_backbone_dict_path)
-                with open(os.path.join(log_save_dir, 'training_log_losses.txt'), 'w') as fp:
-                    for loss in avg_losses_per_epoch:
+                # Record loss
+                with open(os.path.join(log_save_dir, 'training_log_losses_score_net.txt'), 'w') as fp:
+                    for loss in avg_losses_per_epoch_score_net:
+                        fp.write(f'{loss}\n')
+                with open(os.path.join(log_save_dir, 'training_log_losses_cnn_auxiliary.txt'), 'w') as fp:
+                    for loss in avg_losses_per_epoch_cnn_auxiliary:
                         fp.write(f'{loss}\n')
             pass
         pass
 
-    def __train_one_epoch(self, model, cnn_backbone, omega, input_images, optimizer, batch_size: int) -> float:
-        cnn_feature: torch.Tensor = cnn_backbone(input_images)
+    def __train_one_epoch(self,
+                          model, cnn_backbone,
+                          omega, input_images, class_labels,
+                          optimizer,
+                          batch_size: int) -> Tuple[float, float]:
+        cnn_feature: torch.Tensor; cnn_auxiliary: torch.Tensor
+        cnn_feature, cnn_auxiliary = cnn_backbone(input_images)
 
-        loss = self.__loss_fn(model, omega, cnn_feature, batch_size)
+        loss_score_net: torch.Tensor = self.__loss_fn(model, omega, cnn_feature, batch_size)
+        loss_cnn_auxiliary: torch.Tensor = F.cross_entropy(cnn_auxiliary, class_labels)
+        loss: torch.Tensor = loss_score_net + loss_cnn_auxiliary
 
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
-        return loss.item()
+        return loss_score_net.item(), loss_cnn_auxiliary.item()
 
     def __loss_fn(self, model, omega, cnn_feature, batch_size: int, eps=1e-5):
         """The loss function for training score-based generative models.
@@ -240,7 +261,9 @@ class TarGF_Tangram:
         score_net.to(self.device)
         score_net.eval()
         # CNN backbone
-        cnn_backbone: nn.Module = eval(cnn_backbone_model)(config=config, embed_dim=embed_dim)
+        cnn_backbone: nn.Module = eval(cnn_backbone_model)(config=config,
+                                                           embed_dim=embed_dim,
+                                                           num_class=self._dataset.num_class)
         state_dict_cnn_backbone = torch.load(path_cnn_backbone_checkpoint)
         cnn_backbone.load_state_dict(state_dict_cnn_backbone)
         cnn_backbone.to(self.device)

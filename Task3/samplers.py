@@ -38,7 +38,8 @@ def euler_maruyama_sampler(score_net_model: torch.nn.Module,
     """
     batch_size: int = omega.shape[0]
     # Get the image embedding feature
-    cnn_feature: torch.Tensor = cnn_backbone(input_images)
+    cnn_feature: torch.Tensor; cnn_auxiliary: torch.Tensor
+    cnn_feature, cnn_auxiliary = cnn_backbone(input_images)
     # Define steps
     time_steps = torch.linspace(t_final, eps, num_steps, device=device)
     step_size = time_steps[0] - time_steps[1]
