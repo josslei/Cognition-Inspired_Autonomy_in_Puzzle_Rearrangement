@@ -1,15 +1,22 @@
-config_name = 'bs9_simple_cnn_6_layers_no_pretrain_random_image_segmentation_input'
+config_name = 'bs9_new_segmentation_no_random_cnn_score_net'
 
 [dataset]
 path_kilogram = './kilogram/dataset/'
 path_concrete_images = './images/'
 input_image_type = 'segmentation'
+segmentation_random_color = false
+# Method used to increase contrast. Recommend 'normalize'.
+# Options: 'normalize', 'equalize_hist'
+method_increase_contrast = 'equalize_hist'
+# Method used to conduct binarization. Recommend 'otsu'.
+# Options: 'otsu'
+method_binarization = 'otsu'
 
 [score_net]
 num_fc_layers = 4
 hidden_dim = 64
 embed_dim = 32
-checkpoint = ''
+checkpoint = 'score_net_v1.3.1_corrected.pt'
 
 [cnn_backbone]
 model = 'SimpleCNN'
@@ -23,7 +30,8 @@ checkpoint = 'sam_vit_h_4b8939.pth'
 
 [training]
 learning_rate = 0.0002
-num_epochs = 500000
-batch_size = 36
+num_epochs = 20000
+batch_size = 45
 t_max = 0.05
 t_decay = false
+cnn_auxiliary = false

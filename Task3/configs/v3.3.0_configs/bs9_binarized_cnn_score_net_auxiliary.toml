@@ -1,10 +1,9 @@
-config_name = 'template'
+config_name = 'bs9_binarized_cnn_score_net_auxiliary'
 
 [dataset]
 path_kilogram = './kilogram/dataset/'
 path_concrete_images = './images/'
-input_image_type = 'segmentation'
-segmentation_random_color = false
+input_image_type = 'binarized'
 # Method used to increase contrast. Recommend 'normalize'.
 # Options: 'normalize', 'equalize_hist'
 method_increase_contrast = 'equalize_hist'
@@ -16,7 +15,7 @@ method_binarization = 'otsu'
 num_fc_layers = 4
 hidden_dim = 64
 embed_dim = 32
-checkpoint = ''
+checkpoint = 'score_net_v1.3.1_corrected.pt'
 
 [cnn_backbone]
 model = 'SimpleCNN'

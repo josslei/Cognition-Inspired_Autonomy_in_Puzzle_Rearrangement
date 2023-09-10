@@ -1,6 +1,7 @@
 import sys
 import os
 
+import torch
 import tomli
 
 from targf import TarGF_Tangram
@@ -30,4 +31,5 @@ def main():
 
 
 if __name__ == '__main__':
+    torch.multiprocessing.set_start_method("spawn")
     main()

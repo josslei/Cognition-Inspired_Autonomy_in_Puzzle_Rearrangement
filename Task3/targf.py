@@ -8,10 +8,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from torch.utils.data import DataLoader
-from torchvision import transforms
 
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Union
 from itertools import chain
 import copy
 import cv2
@@ -20,7 +18,7 @@ import samplers
 import evaluator
 from network.score_nets import ScoreNetTangram
 from network.sde import marginal_prob_std, diffusion_coeff
-from dataset import Dataset_KILOGRAM
+from dataset import Dataset_KILOGRAM, DataLoaderX
 from visualization.visualize_tangrams import draw_tangrams, images_to_video
 
 from network.vgg16 import VGG16
@@ -48,15 +46,9 @@ class TarGF_Tangram:
 
         self.device = device
 
-        # Prepare dataset
-        _transforms = transforms.Compose([
-            transforms.Resize((224, 224)),
-            transforms.ToTensor(),
-            #transforms.RandomRotation(360, fill=0xff)
-        ])
         # All data are loaded into RAM (of self.device) here
         print('Loading dataset...')
-        self._dataset: Dataset_KILOGRAM = Dataset_KILOGRAM(config, _transforms, self.device)
+        self._dataset: Dataset_KILOGRAM = Dataset_KILOGRAM(config, self.device)
         print('Done.')
 
     def train(self, config: dict, log_save_dir: str) -> None:
@@ -74,9 +66,10 @@ class TarGF_Tangram:
         learning_rate: float = config['training']['learning_rate']
         num_epochs: int = config['training']['num_epochs']
         batch_size: int = config['training']['batch_size']
+        cnn_auxiliary_flag: bool = config['training']['cnn_auxiliary']
 
         # Create dataloader
-        self.dataloader = DataLoader(self._dataset, batch_size=batch_size, shuffle=True)
+        self.dataloader = DataLoaderX(self._dataset, batch_size=batch_size, shuffle=True)
 
         # Create models and optimizer
         print('Creating models and optimizer...')
@@ -101,18 +94,6 @@ class TarGF_Tangram:
                                lr=learning_rate, betas=self.betas)
         print('Done.')
 
-        ## Cache all data
-        #import time
-        #T1 = time.time()
-        #missing: List[str] = []
-        #for i in range(self._dataset.__len__()):
-        #    print(f'Working on i={i}, {self._dataset.data_list[i].id}')
-        #    self._dataset.__getitem__(i)
-        #T2 = time.time()
-        #print(f'Time used: {T2 - T1} seconds')
-        #print(f'Missing: {missing}')
-        #exit()
-
         # Training loop
         avg_losses_per_epoch_score_net: List[float] = []
         avg_losses_per_epoch_cnn_auxiliary: List[float] = []
@@ -127,7 +108,9 @@ class TarGF_Tangram:
                 omega: torch.Tensor = data[0].view(batch_size, self.num_objs * 3)
                 concrete_images: torch.Tensor = data[1]
                 segmentation_images: torch.Tensor = data[2]
-                class_labels: torch.Tensor = data[3].to(self.device)
+                enhanced_images: torch.Tensor = data[3]
+                binarized_images: torch.Tensor = data[4]
+                class_labels: torch.Tensor = data[-1].to(self.device)
                 input_images: torch.Tensor = eval(input_image_type + '_images') # 'concrete' or 'segmentation'
                 loss_score_net: float; loss_cnn_auxiliary: float
                 loss_score_net, loss_cnn_auxiliary = self.__train_one_epoch(model=score_net,
@@ -136,7 +119,8 @@ class TarGF_Tangram:
                                                                             input_images=input_images,
                                                                             class_labels=class_labels,
                                                                             optimizer=optimizer,
-                                                                            batch_size=batch_size)
+                                                                            batch_size=batch_size,
+                                                                            cnn_auxiliary_flag=cnn_auxiliary_flag)
                 _avg_loss_score_net += loss_score_net
                 _avg_loss_cnn_auxiliary += loss_cnn_auxiliary
                 _num_iters += 1
@@ -158,9 +142,11 @@ class TarGF_Tangram:
                 with open(os.path.join(log_save_dir, 'training_log_losses_score_net.txt'), 'w') as fp:
                     for loss in avg_losses_per_epoch_score_net:
                         fp.write(f'{loss}\n')
-                with open(os.path.join(log_save_dir, 'training_log_losses_cnn_auxiliary.txt'), 'w') as fp:
+                if cnn_auxiliary_flag:
+                    fp = open(os.path.join(log_save_dir, 'training_log_losses_cnn_auxiliary.txt'), 'w')
                     for loss in avg_losses_per_epoch_cnn_auxiliary:
                         fp.write(f'{loss}\n')
+                    fp.close()
             pass
         pass
 
@@ -168,19 +154,25 @@ class TarGF_Tangram:
                           model, cnn_backbone,
                           omega, input_images, class_labels,
                           optimizer,
-                          batch_size: int) -> Tuple[float, float]:
+                          batch_size: int,
+                          cnn_auxiliary_flag: bool) -> Tuple[float, float]:
         cnn_feature: torch.Tensor; cnn_auxiliary: torch.Tensor
         cnn_feature, cnn_auxiliary = cnn_backbone(input_images)
 
-        loss_score_net: torch.Tensor = self.__loss_fn(model, omega, cnn_feature, batch_size)
-        loss_cnn_auxiliary: torch.Tensor = F.cross_entropy(cnn_auxiliary, class_labels)
-        loss: torch.Tensor = loss_score_net + loss_cnn_auxiliary
+        loss: torch.Tensor; loss_score_net: torch.Tensor; loss_cnn_auxiliary: Union[torch.Tensor, None]
+        loss_score_net = self.__loss_fn(model, omega, cnn_feature, batch_size)
+        loss_cnn_auxiliary = None
+        if cnn_auxiliary_flag:
+            loss_cnn_auxiliary = F.cross_entropy(cnn_auxiliary, class_labels)
+            loss = loss_score_net + loss_cnn_auxiliary
+        else:
+            loss = loss_score_net
 
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
-        return loss_score_net.item(), loss_cnn_auxiliary.item()
+        return loss_score_net.item(), loss_cnn_auxiliary.item() if loss_cnn_auxiliary is not None else 0.0
 
     def __loss_fn(self, model, omega, cnn_feature, batch_size: int, eps=1e-5):
         """The loss function for training score-based generative models.
@@ -275,6 +267,7 @@ class TarGF_Tangram:
         original_omega: torch.Tensor = self._dataset.data_list[data_index].omega # type: ignore
         concrete_images: np.ndarray = self._dataset.data_list[data_index].concrete_images[0].unsqueeze(0) # type: ignore
         segmentation_images: torch.Tensor = self._dataset.data_list[data_index].segmentation_images[0].unsqueeze(0) # type: ignore
+        binarized_images: torch.Tensor = self._dataset.data_list[data_index].binarized_images[0].unsqueeze(0) # type: ignore
         input_images: torch.Tensor = eval(input_image_type + '_images') # 'concrete' or 'segmentation'
         # -> (7, 3)
         original_omega = original_omega.view(1, 7 * 3)

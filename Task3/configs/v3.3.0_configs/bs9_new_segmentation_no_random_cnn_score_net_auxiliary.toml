@@ -1,4 +1,4 @@
-config_name = 'template'
+config_name = 'bs9_new_segmentation_no_random_cnn_score_net_auxiliary'
 
 [dataset]
 path_kilogram = './kilogram/dataset/'
@@ -16,7 +16,7 @@ method_binarization = 'otsu'
 num_fc_layers = 4
 hidden_dim = 64
 embed_dim = 32
-checkpoint = ''
+checkpoint = 'score_net_v1.3.1_corrected.pt'
 
 [cnn_backbone]
 model = 'SimpleCNN'

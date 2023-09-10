@@ -125,7 +125,7 @@ def draw_tangrams(omegas: List[np.ndarray],
                                background_color=background_color,
                                position_point_color=position_point_color,
                                orientation_vector_color=orientation_vector_color,
-                               orientation_vector_length=0.1*canvas_length)
+                               orientation_vector_length=0)
         frames += [img]
     return frames
 

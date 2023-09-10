@@ -1,6 +1,6 @@
 import sys
 import os
-from typing import Tuple, List
+from typing import Tuple, List, Dict
 
 import json
 try:
@@ -15,7 +15,7 @@ sys.path.append('..')
 from visualization.tangram_data_tools import rotation_matrix_2d_from_theta, transformation_matrix_from_svg_str
 from visualization.tangram_data_tools import tuple_2x2_dot_3x3_homogeneous
 from visualization.tangram_data_tools import vertices_to_position, vertices_to_orientation
-from visualization.tangram_data_tools import PIECE_SHAPE_TEMPLATES
+from visualization.tangram_data_tools import PIECE_SHAPE_TEMPLATES, TANGRAM_DATA_MAX
 
 
 # TODO: There's a "transform" notation in the svg (page-A ~ page-L uses this)
@@ -168,8 +168,17 @@ def read_kilogram(path_dataset: str, subset: str, _template_vertices=PIECE_SHAPE
                 points += [(p[0] / coef, p[1] / coef)]
             tangram_shape[k] = points
         return coef
+    #def _copy_and_normalize_tangram(tangram: Dict[str, List[Tuple[float, float]]]) -> Dict[str, List[Tuple[float, float]]]:
+    #    _tangram: Dict[str, List[Tuple[float, float]]] = dict()
+    #    for tk in tangram.keys():
+    #        vertices: List[Tuple[float, float]] = []
+    #        for v in tangram[tk]:
+    #            vertices += [(v[0] / TANGRAM_DATA_MAX, v[1] / TANGRAM_DATA_MAX)]
+    #        _tangram[tk] = vertices
+    #    return _tangram
 
     tangram_data = dict()
+    #_template_vertices = _copy_and_normalize_tangram(_template_vertices)
 
     # Load metadata
     with open(os.path.join(path_dataset, f'{subset}.json')) as fp:
@@ -187,9 +196,25 @@ def read_kilogram(path_dataset: str, subset: str, _template_vertices=PIECE_SHAPE
         tangram['standardization_coef'] = standardize_tangram_shape(tangram['tangram_shape'])
         positions = dict()
         orientations = dict()
-        for p_id in tangram['tangram_shape'].keys():
-            positions[p_id] = vertices_to_position(tangram['tangram_shape'][p_id])
-            orientations[p_id] = vertices_to_orientation(_template_vertices[p_id], tangram['tangram_shape'][p_id], positions[p_id])
+        # Position & rotation
+        _tangram_vertices: Dict[str, List[Tuple[float, float]]]
+        #_tangram_vertices = _copy_and_normalize_tangram(tangram['tangram_shape'])
+        _tangram_vertices = tangram['tangram_shape']
+        for p_id in _tangram_vertices.keys():
+            positions[p_id] = vertices_to_position(_tangram_vertices[p_id])
+            try:
+                orientations[p_id] = vertices_to_orientation(_template_vertices[p_id],
+                                                             _tangram_vertices[p_id],
+                                                             positions[p_id],
+                                                             t_id)
+            except RuntimeError:
+                _flipped_vertices: List[Tuple[float, float]]; _flipped_position: Tuple[float, float]
+                _flipped_vertices = [(-v[0], v[1]) for v in _tangram_vertices[p_id]]
+                _flipped_position = (-positions[p_id][0], positions[p_id][1])
+                orientations[p_id] = vertices_to_orientation(_template_vertices[p_id],
+                                                             _flipped_vertices,
+                                                             _flipped_position,
+                                                             f'{t_id}-{p_id}')
         tangram['positions'] = positions
         tangram['orientations'] = orientations
         annotations = []
