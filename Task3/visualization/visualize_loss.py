@@ -2,6 +2,7 @@ import sys
 
 import numpy as np
 import matplotlib.pyplot as plt
+import math
 
 from typing import List
 
@@ -16,7 +17,19 @@ if __name__ == '__main__':
     # Read & prepare
     with open(path_losses, 'r') as fp:
         _losses = fp.readlines()
-    losses: np.ndarray = np.asarray([float(l) for l in _losses])
+    losses_each: np.ndarray = np.asarray([float(l) for l in _losses])
+    losses = []
+    avg = 0
+    count = 0
+    for l in losses_each:
+        avg += l
+        count += 1
+        if count == 100:
+            losses += [avg / count]
+            avg = 0
+            count = 0
+    losses: np.ndarray = np.array(losses)
+
     epochs: List[int] = [i for i, _ in enumerate(losses)]
 
     # Graph settings
@@ -24,7 +37,8 @@ if __name__ == '__main__':
     # Axes settings
     plt.xlabel('Epochs')
     plt.ylabel('Loss')
-    plt.ylim(0, np.ceil(losses.max()))
+    #plt.ylim(0, np.ceil(losses.max()))
+    plt.ylim(0, 20)
 
     plt.plot(epochs, losses)
     plt.savefig('./loss_graph.png')

@@ -22,8 +22,9 @@ from visualization.read_kilogram import read_kilogram
 from segment_anything import SamAutomaticMaskGenerator, sam_model_registry
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+IMAGE_SIZE = (224, 224)
 TRANSFORMS = transforms.Compose([
-    transforms.Resize((224, 224)),
+    transforms.Resize(IMAGE_SIZE),
     transforms.ToTensor(),
 ])
 ITERS_PER_BATCH: int = 10
@@ -85,12 +86,14 @@ class Dataset_KILOGRAM(Dataset):
 
         # Data preprocess
         self.data_list: List[Data] = []
+        self.test_list: List[Data] = []
         for tk in tangram_data.keys():
             omega = []
             for pk in tangram_data[tk]['positions'].keys():
                 o = list(tangram_data[tk]['positions'][pk])
                 o += [tangram_data[tk]['orientations'][pk]]
                 omega += [o]
+            # Read & process data
             _omega: torch.Tensor = torch.tensor(omega, device=device, dtype=torch.float32)
             concrete_images: Union[List[torch.Tensor], None]
             segmentation_masks: Union[List[List[Dict[str, Any]]], None]
@@ -100,6 +103,25 @@ class Dataset_KILOGRAM(Dataset):
             concrete_images, segmentation_masks, segmentation_images, enhanced_images, binarized_images = self.__prepare_images(tk)
             if type(concrete_images) is type(None) or type(segmentation_masks) is type(None):
                 continue
+            # Split some to test
+            concrete_images_test: Union[List[torch.Tensor], None]
+            segmentation_masks_test: Union[List[List[Dict[str, Any]]], None]
+            segmentation_images_test: Union[List[torch.Tensor], None]
+            enhanced_images_test: Union[List[torch.Tensor], None]
+            binarized_images_test: Union[List[torch.Tensor], None]
+            _test_len: int = int(len(concrete_images) / 5) # type: ignore
+            #
+            concrete_images_test = concrete_images[-_test_len:] # type: ignore
+            segmentation_masks_test = segmentation_masks[-_test_len:] # type: ignore
+            segmentation_images_test = segmentation_images[-_test_len:] # type: ignore
+            enhanced_images_test = enhanced_images[-_test_len:] # type: ignore
+            binarized_images_test = binarized_images[-_test_len:] # type: ignore
+            concrete_images = concrete_images[:-_test_len] # type: ignore
+            segmentation_masks = segmentation_masks[:-_test_len] # type: ignore
+            segmentation_images = segmentation_images[:-_test_len] # type: ignore
+            enhanced_images = enhanced_images[:-_test_len] # type: ignore
+            binarized_images = binarized_images[:-_test_len] # type: ignore
+            # Append to training set
             self.data_list += [Data(id=tk,
                                     class_label=self.num_class,
                                     omega=_omega,
@@ -109,6 +131,17 @@ class Dataset_KILOGRAM(Dataset):
                                     segmentation_random_color=segmentation_random_color,
                                     enhanced_images=enhanced_images,
                                     binarized_images=binarized_images,
+                                    device=self.device)]
+            # Append to testing set
+            self.test_list += [Data(id=tk,
+                                    class_label=self.num_class,
+                                    omega=_omega,
+                                    concrete_images=concrete_images_test,
+                                    segmentation_masks=segmentation_masks_test,
+                                    segmentation_images=segmentation_images_test,
+                                    segmentation_random_color=segmentation_random_color,
+                                    enhanced_images=enhanced_images_test,
+                                    binarized_images=binarized_images_test,
                                     device=self.device)]
             self.num_class += 1
         # Normalization
@@ -255,3 +288,32 @@ class Dataset_KILOGRAM(Dataset):
             _preprocessed_binarized_image: torch.Tensor = self.transforms(Image.fromarray(_binarized_image)) # type: ignore
             binarized_images_list += [_preprocessed_binarized_image.to(self.device)]
         return concrete_images_list, segmentation_masks_list, segmentation_images_list, enhanced_images_list, binarized_images_list
+
+
+class Dataset_KILOGRAM_test(Dataset):
+    def __init__(self, dataset_kilogram: Dataset_KILOGRAM) -> None:
+        super().__init__()
+
+        self.test_list: List[Data] = dataset_kilogram.test_list
+
+    def __getitem__(self, index: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, int]:
+        """
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor]: Omega
+                Shape of omega: (7, 3)
+        """
+        assert self.test_list[index].omega is not None
+        assert self.test_list[index].segmentation_masks is not None
+        _omega: torch.Tensor
+        _concrete_image: torch.Tensor
+        _segmentation_masks: List[Dict[str, Any]]
+        _segmentation_image: torch.Tensor
+        _enhanced_image: torch.Tensor
+        _binarized_image: torch.Tensor
+        _class_label: int
+        _omega, _concrete_image, _segmentation_masks, _segmentation_image, _enhanced_image, _binarized_image = self.test_list[index].get_one()
+        _class_label = self.test_list[index].class_label
+        return _omega, _concrete_image, _segmentation_image, _enhanced_image, _binarized_image, _class_label
+
+    def __len__(self) -> int:
+        return len(self.test_list)

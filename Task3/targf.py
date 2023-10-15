@@ -18,7 +18,7 @@ import samplers
 import evaluator
 from network.score_nets import ScoreNetTangram
 from network.sde import marginal_prob_std, diffusion_coeff
-from dataset import Dataset_KILOGRAM, DataLoaderX
+from dataset import Dataset_KILOGRAM, Dataset_KILOGRAM_test, DataLoaderX, IMAGE_SIZE
 from visualization.visualize_tangrams import draw_tangrams, images_to_video
 
 from network.vgg16 import VGG16
@@ -49,6 +49,7 @@ class TarGF_Tangram:
         # All data are loaded into RAM (of self.device) here
         print('Loading dataset...')
         self._dataset: Dataset_KILOGRAM = Dataset_KILOGRAM(config, self.device)
+        self._dataset_test: Dataset_KILOGRAM_test = Dataset_KILOGRAM_test(self._dataset)
         print('Done.')
 
     def train(self, config: dict, log_save_dir: str) -> None:
@@ -70,9 +71,11 @@ class TarGF_Tangram:
 
         # Create dataloader
         self.dataloader = DataLoaderX(self._dataset, batch_size=batch_size, shuffle=True)
+        self.test_dataloader = DataLoaderX(self._dataset_test, batch_size=self._dataset_test.__len__(), shuffle=False)
 
-        # Create models and optimizer
-        print('Creating models and optimizer...')
+        # Create models, the optimizer, and the scheduler
+        print('Creating models, the optimizer, and the scheduler...')
+        # Models
         score_net = ScoreNetTangram(marginal_prob_std_func=self.marginal_prob_std_fn,
                                     num_objs=self.num_objs,
                                     device=self.device,
@@ -90,13 +93,18 @@ class TarGF_Tangram:
             state_dict_cnn_backbone = torch.load(cnn_backbone_checkpoint)
             cnn_backbone.load_state_dict(state_dict_cnn_backbone)
         cnn_backbone.to(self.device)
+        # Optimizer
         optimizer = optim.Adam(params=chain(cnn_backbone.parameters(), score_net.parameters()),
                                lr=learning_rate, betas=self.betas)
+        # Scheduler
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer=optimizer, mode='min', factor=0.1, patience=4000)
         print('Done.')
 
         # Training loop
         avg_losses_per_epoch_score_net: List[float] = []
         avg_losses_per_epoch_cnn_auxiliary: List[float] = []
+        validation_loss: List[float] = []
+        validation_loss_cnn_aux: List[float] = []
         score_net_dict_path: str = ''
         cnn_backbone_dict_path: str = ''
         for epoch in trange(num_epochs):
@@ -127,6 +135,33 @@ class TarGF_Tangram:
             avg_losses_per_epoch_score_net += [_avg_loss_score_net / _num_iters]
             avg_losses_per_epoch_cnn_auxiliary += [_avg_loss_cnn_auxiliary / _num_iters]
             # TODO: Evaluation
+            # Validation
+            _avg_loss_score_net: float = 0
+            _avg_loss_cnn_auxiliary: float = 0
+            _num_iters: int = 0
+            for _, data in enumerate(self.test_dataloader):
+                omega: torch.Tensor = data[0].view(self._dataset_test.__len__(), self.num_objs * 3)
+                concrete_images: torch.Tensor = data[1]
+                segmentation_images: torch.Tensor = data[2]
+                enhanced_images: torch.Tensor = data[3]
+                binarized_images: torch.Tensor = data[4]
+                class_labels: torch.Tensor = data[-1].to(self.device)
+                input_images: torch.Tensor = eval(input_image_type + '_images') # 'concrete' or 'segmentation'
+                loss_score_net: float; loss_cnn_auxiliary: float
+                loss_score_net, loss_cnn_auxiliary = self.__validate_one_batch(score_net=score_net,
+                                                                               cnn_backbone=cnn_backbone,
+                                                                               omega=omega,
+                                                                               input_images=input_images,
+                                                                               class_labels=class_labels,
+                                                                               optimizer=optimizer,
+                                                                               batch_size=self._dataset_test.__len__())
+                _avg_loss_score_net += loss_score_net
+                _avg_loss_cnn_auxiliary += loss_cnn_auxiliary
+                _num_iters += 1
+            validation_loss += [_avg_loss_score_net / _num_iters]
+            validation_loss_cnn_aux += [_avg_loss_cnn_auxiliary / _num_iters]
+            # Schedule Learning Rate
+            scheduler.step(validation_loss[-1])
             # Save model
             if (epoch + 1) % 500 == 0:
                 os.system(f'mkdir -p {log_save_dir}')
@@ -147,6 +182,9 @@ class TarGF_Tangram:
                     for loss in avg_losses_per_epoch_cnn_auxiliary:
                         fp.write(f'{loss}\n')
                     fp.close()
+                with open(os.path.join(log_save_dir, 'training_log_validation_losses_score_net.txt'), 'w') as fp:
+                    for loss in validation_loss:
+                        fp.write(f'{loss}\n')
             pass
         pass
 
@@ -156,6 +194,9 @@ class TarGF_Tangram:
                           optimizer,
                           batch_size: int,
                           cnn_auxiliary_flag: bool) -> Tuple[float, float]:
+        model.train()
+        cnn_backbone.train()
+
         cnn_feature: torch.Tensor; cnn_auxiliary: torch.Tensor
         cnn_feature, cnn_auxiliary = cnn_backbone(input_images)
 
@@ -173,6 +214,21 @@ class TarGF_Tangram:
         optimizer.step()
 
         return loss_score_net.item(), loss_cnn_auxiliary.item() if loss_cnn_auxiliary is not None else 0.0
+
+    def __validate_one_batch(self,
+                             score_net, cnn_backbone,
+                             omega, input_images, class_labels,
+                             optimizer,
+                             batch_size: int) -> float:
+        score_net.train()
+        cnn_backbone.train()
+
+        with torch.no_grad():
+            cnn_feature: torch.Tensor; cnn_auxiliary: torch.Tensor
+            cnn_feature, cnn_auxiliary = cnn_backbone(input_images)
+            loss_score_net: torch.Tensor = self.__loss_fn(score_net, omega, cnn_feature, batch_size)
+            loss_cnn_auxiliary: torch.Tensor = F.cross_entropy(cnn_auxiliary, class_labels)
+        return loss_score_net.item(), loss_cnn_auxiliary.item()
 
     def __loss_fn(self, model, omega, cnn_feature, batch_size: int, eps=1e-5):
         """The loss function for training score-based generative models.
@@ -214,7 +270,7 @@ class TarGF_Tangram:
              path_save_visualization: str,
              data_index: int,
              num_steps: int = 500,
-             eps: float = 1e-3) -> None:
+             eps: float = 1e-3) -> List[Dict[str, float]]:
         """ Test a visualize a sample
 
         Args:
@@ -264,27 +320,27 @@ class TarGF_Tangram:
 
         omega_sequences: List[List[np.ndarray]] = []
         # Target data
-        original_omega: torch.Tensor = self._dataset.data_list[data_index].omega # type: ignore
-        concrete_images: np.ndarray = self._dataset.data_list[data_index].concrete_images[0].unsqueeze(0) # type: ignore
-        segmentation_images: torch.Tensor = self._dataset.data_list[data_index].segmentation_images[0].unsqueeze(0) # type: ignore
-        binarized_images: torch.Tensor = self._dataset.data_list[data_index].binarized_images[0].unsqueeze(0) # type: ignore
-        input_images: torch.Tensor = eval(input_image_type + '_images') # 'concrete' or 'segmentation'
-        # -> (7, 3)
-        original_omega = original_omega.view(1, 7 * 3)
-        samplers.append_omega_batch(omega_sequences, original_omega)
-        # Add perturbance
+        concrete_image: torch.Tensor; segmentation_image: torch.Tensor; binarized_image: torch.Tensor
+        omega_gt, concrete_image, _, segmentation_image, _, binarized_image = self._dataset.test_list[data_index].get_one()
+        #omega_gt, concrete_image, _, segmentation_image, _, binarized_image = self._dataset.data_list[data_index].get_one()
+        input_image: torch.Tensor = eval(input_image_type + '_image') # 'concrete' or 'segmentation'
+        input_image = input_image.unsqueeze(0)
+        omega_gt = omega_gt.reshape(1, 21)
+        samplers.append_omega_batch(omega_sequences, omega_gt)
+        # Generate random arrangement
+        #t_final: torch.Tensor = torch.tensor([1.0], device=self.device)
         t_final: torch.Tensor = torch.tensor([0.05], device=self.device)
-        z = torch.randn_like(original_omega)
+        z = torch.randn([7, 3], device=self.device)
         std = self.marginal_prob_std_fn(t_final)
-        perturbance: torch.Tensor = z * std
-        perturbed_omega: torch.Tensor = original_omega + perturbance
+        perturbed_omega: torch.Tensor = (z * std).reshape((1, 7 * 3))
+        #perturbed_omega: torch.Tensor = omega_gt + (z * std).reshape((1, 7 * 3))
         samplers.append_omega_batch(omega_sequences, perturbed_omega)
         # Euler-Maruyama sampler
         result: torch.Tensor
         result = samplers.euler_maruyama_sampler(score_net_model=score_net,
                                                  cnn_backbone=cnn_backbone,
                                                  diffusion_coeff_fn=self.diffusion_coeff_fn,
-                                                 input_images=input_images,
+                                                 input_images=input_image,
                                                  omega=perturbed_omega,
                                                  omega_sequences=omega_sequences,
                                                  t_final=t_final.item(),
@@ -293,7 +349,7 @@ class TarGF_Tangram:
         # Evaluation
         print('Evaluating...')
         errors: List[Dict[str, float]]
-        errors = evaluator.evaluate(result, original_omega, self.device) # type: ignore
+        errors = evaluator.evaluate(result, omega_gt, self.device) # type: ignore
         # Save results
         print('Saving results...')
         # TODO
@@ -308,10 +364,18 @@ class TarGF_Tangram:
             # Visualized result
             frames = draw_tangrams(omegas=o, canvas_length=1000)
             cv2.imwrite(os.path.join(path_save_visualization, f'{i}/gt.png'), frames[0])
+            cv2.imwrite(os.path.join(path_save_visualization, f'{i}/random.png'), frames[1])
             cv2.imwrite(os.path.join(path_save_visualization, f'{i}/result.png'), frames[-1])
-            _concrete_img: np.ndarray = cv2.resize(concrete_images[0].cpu().numpy().astype(np.uint8), frames[0].shape[:2])
-            _segmentation_img: np.ndarray = cv2.resize(segmentation_images[0].cpu().numpy().astype(np.uint8), frames[0].shape[:2])
+            _concrete_img: np.ndarray = cv2.resize(concrete_image.cpu().numpy().astype(np.uint8).reshape(IMAGE_SIZE + (3,)), frames[0].shape[:2])
+            _segmentation_img: np.ndarray = cv2.resize(segmentation_image.cpu().numpy().astype(np.uint8).reshape(IMAGE_SIZE + (3,)), frames[0].shape[:2])
+            _binarized_img: np.ndarray = cv2.resize(segmentation_image.cpu().numpy().astype(np.uint8).reshape(IMAGE_SIZE + (3,)), frames[0].shape[:2])
+            cv2.imwrite(os.path.join(path_save_visualization, f'{i}/con.png'), _concrete_img * 255)
+            cv2.imwrite(os.path.join(path_save_visualization, f'{i}/seg.png'), _segmentation_img * 255)
+            cv2.imwrite(os.path.join(path_save_visualization, f'{i}/bin.png'), _binarized_img * 255)
             images_to_video(os.path.join(path_save_visualization, f'{i}/inference_process.mp4'),
-                            [_concrete_img] + [_segmentation_img] + frames,
-                            [30,] * 4 + [1,] * (len(frames) - 3) + [60],
+                            #[_concrete_img] + [_segmentation_img] + frames,
+                            #[30,] * 4 + [1,] * (len(frames) - 3) + [60],
+                            frames,
+                            [30,] * 2 + [1,] * (len(frames) - 3) + [60],
                             30)
+        return errors

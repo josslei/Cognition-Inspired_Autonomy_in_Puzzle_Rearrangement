@@ -4,7 +4,7 @@ config_name = 'template'
 path_kilogram = './kilogram/dataset/'
 path_concrete_images = './images/'
 input_image_type = 'segmentation'
-segmentation_random_color = false
+segmentation_random_color = true
 # Method used to increase contrast. Recommend 'normalize'.
 # Options: 'normalize', 'equalize_hist'
 method_increase_contrast = 'equalize_hist'
@@ -13,10 +13,10 @@ method_increase_contrast = 'equalize_hist'
 method_binarization = 'otsu'
 
 [score_net]
-num_fc_layers = 4
+num_fc_layers = 8
 hidden_dim = 64
 embed_dim = 32
-checkpoint = ''
+checkpoint = 'score_net_lim_t_1016.pt'
 
 [cnn_backbone]
 model = 'SimpleCNN'
@@ -30,8 +30,8 @@ checkpoint = 'sam_vit_h_4b8939.pth'
 
 [training]
 learning_rate = 0.0002
-num_epochs = 20000
+num_epochs = 10000
 batch_size = 45
 t_max = 0.05
 t_decay = false
-cnn_auxiliary = true
+cnn_auxiliary = false
